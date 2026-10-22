@@ -17,6 +17,9 @@ dependencies = [
     "pydantic-settings>=2.3",
     "email-validator>=2.1",
     "langchain>=1.0",
+    "langgraph>=1.0",
+    "langgraph-checkpoint-postgres>=3.0",
+    "psycopg[binary,pool]>=3.2",
     "langchain-groq>=1.0",
 ]
 

@@ -2,6 +2,7 @@
 The application database is never touched: the guard below refuses to run against any non-`_test` database."""
 
 import asyncio
+import sys
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -18,15 +19,22 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import get_settings
+from app.ai.actions import campaign as campaign_action
+from app.ai.graphs.checkpointer import open_checkpointer
 from app.ai.tools import inventory as inventory_tool
 from app.ai.tools import sales as sales_tool
+from app.api.v1.ai import get_checkpointer
 from app.core.database import get_session
 from app.main import create_app
 from app.models import Inventory, Product, Sale
 from scripts.create_database import ensure_database
 
+if sys.platform == "win32":  # psycopg's async mode (the LangGraph checkpointer) cannot run on the default ProactorEventLoop
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 ROOT = Path(__file__).resolve().parents[1]
 TABLES = "sales, inventory, products, customers, campaigns"
+CHECKPOINT_TABLES = "checkpoints, checkpoint_blobs, checkpoint_writes"
 
 
 def _test_url() -> str:
@@ -93,8 +101,18 @@ def tool_session(monkeypatch, session_factory: async_sessionmaker[AsyncSession])
         async with session_factory() as s:
             yield s
 
-    for module in (sales_tool, inventory_tool):
+    for module in (sales_tool, inventory_tool, campaign_action):
         monkeypatch.setattr(module, "get_session", override)
+
+
+@pytest_asyncio.fixture
+async def checkpointer(client: AsyncClient, test_database_url: str):
+    """The LangGraph PostgreSQL checkpointer on the isolated test database, wired into the AI endpoints."""
+    async with open_checkpointer(test_database_url) as saver:
+        async with saver.conn.connection() as conn:
+            await conn.execute(f"TRUNCATE {CHECKPOINT_TABLES}")
+        client._transport.app.dependency_overrides[get_checkpointer] = lambda: saver
+        yield saver
 
 
 @pytest_asyncio.fixture

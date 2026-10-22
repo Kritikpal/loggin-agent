@@ -9,7 +9,21 @@ api (FastAPI routers)  ->  services (business rules, transactions)  ->  reposito
 
 `app/services/*` depend only on an `AsyncSession`, so a future LangChain tool can do
 `async with SessionLocal() as s: await SaleService(s).summary(filters)` with no HTTP in between.
-`app/ai/{agents,tools,graphs}` are intentionally empty placeholders.
+`app/ai/` holds the assistant: `tools/` (read-only sales and inventory tools), `agents/` (the tool-calling agent),
+`actions/` (action planning and validation) and `graphs/` (the LangGraph workflow and its PostgreSQL checkpointer).
+
+### AI chat and human approval
+
+`POST /api/v1/ai/chat` answers questions as before. A request to change something (Phase 2: only `CREATE_CAMPAIGN`) is
+planned, validated (discount 0-50%, existing product category, required fields) and paused for approval:
+`status: WAITING_APPROVAL` with the `proposed_action` and a `thread_id`. Then
+`POST /api/v1/ai/workflows/{thread_id}/resume` with `{"decision": "APPROVED" | "REJECTED"}` gives
+`APPROVED_PENDING_EXECUTION` or `REJECTED`. Nothing is executed: no campaign is created yet.
+
+Workflow state lives in PostgreSQL (LangGraph checkpoint tables, created on startup in the app database, not by
+Alembic), so a waiting workflow survives a server restart. On Windows, psycopg's async mode needs the selector event
+loop, hence `--loop asyncio:SelectorEventLoop` in the run command above; without it startup logs a clear error and the
+`/ai` endpoints answer 503 while the rest of the API keeps working.
 
 ## Local setup (Windows / PowerShell)
 
@@ -39,7 +53,7 @@ Copy-Item .env.example .env
 .\.venv\Scripts\python.exe -m scripts.seed_data
 
 # 8. start the API
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000 --loop asyncio:SelectorEventLoop
 
 # 9. open Swagger UI:  http://localhost:8000/docs      (ReDoc: /redoc)
 
