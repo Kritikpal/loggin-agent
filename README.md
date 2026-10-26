@@ -39,6 +39,54 @@ whether the message is a decision, and anything unclear ("make it 10%") is answe
 proposal pending. "Yes" always means the newest proposal. The resume endpoint still works and records its outcome in
 the conversation.
 
+### Long-term memory
+
+The assistant remembers what the manager tells it across conversations. Two kinds of memory are kept in the
+`memories` table:
+- **preferences**, how the manager wants things done, found by key (`report_week`: "Monday to Sunday",
+  `default_discount`: "15%");
+- **observations**, lasting facts about the business that the database does not hold ("Jeans slow down in monsoon,
+  June to September").
+
+Only what the manager *said* is stored. Sales, stock and customer data are never copied into memory: the assistant is
+told to fetch every number with its tools.
+
+**Saving.** After a chat reply has been sent, a background task makes one extra Groq call (strict `json_schema`) that
+proposes memories from the latest message. Nothing is extracted from approval decisions or messages under 15
+characters. Every proposal then passes six checks in order; the first failure drops it and logs why:
+
+| Check | Drops |
+|---|---|
+| `schema` | malformed output, an invented or wrong-kind `updates_id` |
+| `not_said` | evidence that is not in the manager's latest message, numbers that appear only in tool results |
+| `business_data` | restated sales, stock or price figures |
+| `pii` | emails and phone numbers |
+| `duplicate` | the same text, the same preference value, or a near copy (trigram similarity >= 0.8) |
+| `safety_rule` | preferences that touch approvals ("approve automatically", "without asking") |
+
+What survives is written in one transaction as an `INSERT`, an `UPDATE` (the old row becomes `superseded`; rows are
+never edited) or a `FLAG`. A changed preference always replaces the old one, since the latest statement wins. A contradicted observation is
+saved as `conflicted` and the old one stays active until you settle it. A number the assistant suggested and the
+manager agreed to is stored with `origin: endorsed`. A failure anywhere in this path is logged and never changes the
+chat reply. A Groq rate limit (429) is retried up to 3 times, 20 seconds apart.
+
+**Using.** Before the agent runs, every active preference and up to 5 observations matching the last two messages are
+added to the agent's system prompt and the planner's input as "saved notes". The planner may use a saved preference
+(for example a default discount) to fill a proposal; it is still validated and needs human approval, which memory
+cannot change. The router and the approval check do not see the notes.
+
+**Correcting.** Memories are visible and reversible:
+
+| Endpoint | Behaviour |
+|---|---|
+| `GET /api/v1/ai/memories?kind=&status=` | newest first, up to 100; without `status`: `active` and `conflicted` |
+| `DELETE /api/v1/ai/memories/{id}` | soft delete (204). On a `conflicted` memory this rejects it |
+| `POST /api/v1/ai/memories/{id}/accept` | a `conflicted` memory becomes active and the one it contradicted is superseded; 409 for any other status |
+
+Logs show what happened: `memory decision=INSERT|UPDATE|FLAG|SKIP ...` for each proposal and `memory recall ...` for
+the notes each turn was given. Memory needs `GROQ_API_KEY` like the rest of `/ai`, the `pg_trgm` extension (the
+migration creates it) and no other new service; semantic (vector) search is not used.
+
 Workflow state lives in PostgreSQL (LangGraph checkpoint tables, created on startup in the app database, not by
 Alembic), so a waiting workflow survives a server restart. On Windows, psycopg's async mode needs the selector event
 loop, hence `--loop asyncio:SelectorEventLoop` in the run command above; without it startup logs a clear error and the
@@ -99,6 +147,7 @@ Copy-Item .env.example .env
 | | `GET /sales/trends` | `granularity=day\|week\|month`; bucketed in PostgreSQL, empty periods returned as zeros |
 | Customers | `GET /customers`, `POST /customers` | filters: `marketing_consent`, `search` |
 | Campaigns | `GET /campaigns`, `GET /campaigns/{id}`, `POST /campaigns` | creation always stores `status = "draft"` (optional `category`); nothing is sent |
+| AI memory | `GET /ai/memories`, `DELETE /ai/memories/{id}`, `POST /ai/memories/{id}/accept` | see "Long-term memory" above |
 
 Conventions
 - Lists return `{items, total, page, page_size}` (`page` >= 1, `page_size` 1-200, default 50).
@@ -130,7 +179,7 @@ Planted scenarios for later AI agents to find:
 Inventory quantities are scenario "current state" values; they are not derived by replaying the sales history.
 
 ## Database and migrations
-- Tables: `products`, `inventory`, `sales`, `customers`, `campaigns` (UUID primary keys, `TIMESTAMPTZ`, CHECK constraints
+- Tables: `products`, `inventory`, `sales`, `customers`, `campaigns`, `chat_messages`, `memories` (UUID primary keys, `TIMESTAMPTZ`, CHECK constraints
   for prices/quantities/discount range/campaign status, FKs, and indexes for the filters and date queries).
 - Migrations live in `alembic/versions`. After changing a model: `python -m alembic revision --autogenerate -m "message"`
   then `python -m alembic upgrade head`.

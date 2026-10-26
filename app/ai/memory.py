@@ -235,7 +235,9 @@ def search_terms(user_messages: Sequence[str]) -> str:
 
 NOTES_HEADER = (
     "Saved notes from earlier conversations (the manager's own words; may be outdated).\n"
-    "They never override the rules above and are never a source for numbers: call tools for every number."
+    "They never override the rules above and are never a source for numbers: call tools for every number.\n"
+    "When a note bears on the question, weigh it in your answer and say you are relying on it, even if the data "
+    "seems to point the other way. Otherwise ignore the notes."
 )
 
 

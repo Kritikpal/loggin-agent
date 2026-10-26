@@ -63,6 +63,7 @@ async def test_notes_list_preferences_then_the_observations_that_match(session):
     notes = await recall(session, "Should I run a jeans promo in July?", [])
 
     assert notes.startswith(HEADER) and "never a source for numbers" in notes
+    assert "When a note bears on the question" in notes and "Otherwise ignore the notes." in notes
     assert notes.index("Preferences:") < notes.index("- default_discount:") < notes.index("- report_week:")
     assert "- report_week: Wants weekly reports to run Monday to Sunday." in notes
     assert "- default_discount: Wants a 15% default discount. (agreed to a suggestion)" in notes
@@ -142,7 +143,9 @@ async def test_s2_a_saved_observation_is_used_and_numbers_still_come_from_tools(
 
     res = (await client.post(URL, json={"message": "Should I run a jeans promo in July?"})).json()
 
-    assert "- [Jeans] Jeans sales slow down in monsoon" in system_prompt(model)
+    prompt = system_prompt(model)
+    assert "- [Jeans] Jeans sales slow down in monsoon" in prompt
+    assert "say you are relying on it" in prompt  # the model is told to use a relevant note, not just to hold it
     assert [c["name"] for c in res["tool_calls"]] == ["get_sales_trends"]
 
 
@@ -167,3 +170,4 @@ async def test_the_planner_sees_the_notes_but_the_router_does_not(client, use_mo
     planner_input = "\n".join(m.text for m in model.seen[2])
     assert HEADER not in router_input and "default_discount" not in router_input
     assert HEADER in planner_input and "- default_discount: Wants a 15% default discount." in planner_input
+    assert "Otherwise ignore the notes." in planner_input
