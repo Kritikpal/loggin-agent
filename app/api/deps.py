@@ -8,6 +8,7 @@ from app.schemas.common import MAX_PAGE, MAX_PAGE_SIZE, NO_NUL, ErrorResponse, P
 from app.services.campaign import CampaignService
 from app.services.customer import CustomerService
 from app.services.inventory import InventoryService
+from app.services.memory import MemoryService
 from app.services.product import ProductService
 from app.services.sale import SaleService
 
@@ -50,11 +51,16 @@ def campaign_service(session: SessionDep) -> CampaignService:
     return CampaignService(session)
 
 
+def memory_service(session: SessionDep) -> MemoryService:
+    return MemoryService(session)
+
+
 ProductServiceDep = Annotated[ProductService, Depends(product_service)]
 InventoryServiceDep = Annotated[InventoryService, Depends(inventory_service)]
 SaleServiceDep = Annotated[SaleService, Depends(sale_service)]
 CustomerServiceDep = Annotated[CustomerService, Depends(customer_service)]
 CampaignServiceDep = Annotated[CampaignService, Depends(campaign_service)]
+MemoryServiceDep = Annotated[MemoryService, Depends(memory_service)]
 
 # Error shapes documented in OpenAPI (the runtime envelope is built in app.core.errors).
 NOT_FOUND = {404: {"model": ErrorResponse, "description": "Resource not found"}}
