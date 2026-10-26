@@ -35,7 +35,7 @@ if sys.platform == "win32":  # psycopg's async mode (the LangGraph checkpointer)
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 ROOT = Path(__file__).resolve().parents[1]
-TABLES = "sales, inventory, products, customers, campaigns, chat_messages"
+TABLES = "sales, inventory, products, customers, campaigns, chat_messages, memories"
 CHECKPOINT_TABLES = "checkpoints, checkpoint_blobs, checkpoint_writes"
 
 

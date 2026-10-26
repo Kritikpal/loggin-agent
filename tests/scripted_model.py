@@ -51,6 +51,11 @@ def plan(action_type: str = "CREATE_CAMPAIGN", **overrides) -> AIMessage:
     return call({"action_type": action_type, **fields}, "p1", tool="ActionPlan")
 
 
+def extraction(*memories: dict) -> AIMessage:
+    """The memory extraction's structured-output turn: the candidates the model found (none = nothing qualifies)."""
+    return call({"memories": list(memories)}, "e1", tool="Extraction")
+
+
 def verdict(value: str) -> AIMessage:
     """The approval check's structured-output turn (APPROVE / REJECT / OTHER)."""
     return call({"decision": value}, "v1", tool="ApprovalVerdict")
