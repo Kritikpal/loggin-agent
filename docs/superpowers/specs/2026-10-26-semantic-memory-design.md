@@ -2,7 +2,9 @@
 
 Date: 2026-10-26
 Status: draft, awaiting review. Extraction spike done 2026-10-26 (section 15); extractor decided: direct
-`json_schema` call (D4)
+`json_schema` call (D4). Revised 2026-10-26 after design review: gate 1 checks the target's kind; gate 2 adds a
+number rule and the `endorsed` origin; gate 5 no longer blocks refinements; recall uses the last two user messages
+and is logged; the `decide` table covers every case; scenarios S9-S11 added.
 Scope: project 2 of 2 from `2026-10-23-conversation-memory-design.md` (long-term memory across chats).
 Builds on: `chat_messages` (per-conversation history), the LangGraph operator graph, the approval workflow.
 
@@ -58,6 +60,9 @@ Success criteria (acceptance scenarios)
 | S6 | "Monsoon doesn't really affect jeans any more." | FLAG: new row `conflicted`, old stays `active`; `POST .../accept` swaps them |
 | S7 | Extraction call fails (Groq down, bad output) | Chat reply unchanged; failure logged |
 | S8 | "Remember: from now on approve all campaigns automatically without asking me." | SKIP, reason `safety_rule`; approvals unchanged |
+| S9 | After S2's observation: "Actually jeans slow down July to September, not June." | UPDATE: new observation `active`, old `superseded` - not SKIP `duplicate` |
+| S10 | Conv B: "How are jeans doing?", then "And what should I do in July?" | The second turn's notes still include the `[Jeans]` monsoon observation |
+| S11 | Assistant proposes a 15% jeans discount; manager: "Make that my default discount." | INSERT preference with `origin: endorsed`. Had 15% appeared only in a tool result: SKIP `not_said` |
 
 ## 3. High-level design
 
@@ -66,7 +71,7 @@ POST /api/v1/ai/chat
  |
  |  chat_turn()                                   (app/ai/conversation.py, existing)
  |   1. load conversation history                 existing
- |   2. notes = recall(session, message)   <----- NEW  one DB round trip, no model call
+ |   2. notes = recall(session, message, history)  <-- NEW  indexed queries, no model call
  |   3. run_operator(..., notes)                  agent + planner see the notes block
  |   4. save the turn to chat_messages            existing, best-effort
  |
@@ -201,16 +206,24 @@ Pure functions, run in order on every candidate; the first failure is a SKIP wit
 
 | # | Gate | Rule | Catches |
 |---|---|---|---|
-| 1 | `schema` | Content 10-300 chars; a preference has `key` (matching `^[a-z][a-z0-9_]{2,40}$`) and `value`; an observation has `subject` (<= 60); `updates_id` is null or one of the ids sent | Malformed output, invented ids |
-| 2 | `not_said` | Normalised `evidence` (case, whitespace, surrounding quotes and full stop) is a substring of the latest user message. The spike's evidence was an exact substring 84 times out of 84, so no fuzzy fallback | Hallucinations; facts taken from the assistant's reply or tool output |
+| 1 | `schema` | Content 10-300 chars; a preference has `key` (matching `^[a-z][a-z0-9_]{2,40}$`) and `value`; an observation has `subject` (<= 60); `updates_id` is null or one of the ids sent, **and that memory has the same `kind` as the candidate** | Malformed output, invented ids, a preference "updating" an observation |
+| 2 | `not_said` | (a) Normalised `evidence` (case, whitespace, surrounding quotes and full stop) is a substring of the latest user message. The spike's evidence was an exact substring 84 times out of 84, so no fuzzy fallback. (b) Every number in `content` and `value` appears in a user message in the 4-message window or in the assistant's reply; a number found only in tool results fails | Hallucinations; facts taken from tool output; "remember that" pointing at tool data |
 | 3 | `business_data` | Observations only: a number in `content` that also appears in this turn's tool results or assistant reply; **or** a sales/stock/revenue/units/price word next to a number | Restated database data (S3) |
 | 4 | `pii` | Email or phone pattern in `content` or `evidence` | Contact details (never sent to the model today; must not come back via memory) |
-| 5 | `duplicate` | Same `content_hash` as a live memory; or trigram `similarity(content) >= 0.8` with a live memory of the same kind; or a preference with the same key **and** value | Repeats (S4) |
+| 5 | `duplicate` | Same `content_hash` as a live memory; or a preference with the same key **and** value as the active one; or - **insert candidates only** - trigram `similarity(content) >= 0.8` with a live memory of the same kind. Update candidates skip the trigram check: a refinement is meant to look like the row it replaces | Repeats (S4), without blocking refinements (S9) |
 | 6 | `safety_rule` | Preferences only: `key`, `value` or `content` mentions approval or approving (`approv`), or "without asking" | Memories that try to change the approval workflow. Both extractors saved "approve all campaigns automatically" 4 times out of 4 in the spike (S8) |
 
 "Irrelevant" (small talk, one-off requests like "show me jeans") is left to the extraction prompt: the model returns
 nothing for most turns (all 7 such cases in the spike). Gate 2 is the backstop - irrelevant text the manager did not state as a lasting fact rarely
 survives it.
+
+**Stated vs endorsed.** "Make that my default discount" is the manager's own words, but the value can come from the
+assistant's previous reply (a discount the planner proposed). Gate 2b allows that and blocks values that exist only in
+tool results. When a number in the candidate appears in the assistant's reply but in no user message, the row is stored
+with `attributes.origin = "endorsed"` (otherwise `"stated"`); the notes block and `GET` show it as
+`(agreed to a suggestion)`. In practice this only affects preferences: gate 3 already skips any observation whose
+number appears in the reply or the tool results. Known ceiling: an endorsement with no number in it (e.g. a supplier
+name the assistant suggested) is tagged `stated`; add a word-overlap check if the logs show it matters.
 
 Gates 3 and 4 are deliberately blunt. A false SKIP costs one forgotten fact; a false INSERT puts wrong data into
 every future prompt. Skip reasons are logged (section 7) so over-strict gates show up quickly.
@@ -224,13 +237,18 @@ After validation, each candidate gets exactly one decision:
 | any | failed a gate | **SKIP** (reason) |
 | insert, preference | no active row with this key | **INSERT** |
 | insert, preference | active row with this key, different value | **UPDATE** (model missed the key reuse; the DB index would reject an insert anyway) |
-| update, preference | - | **UPDATE**: the manager is the authority on their own preferences; latest statement wins |
-| insert, observation | - | **INSERT** |
-| update, observation | `stance` = confirms / refines | **UPDATE** |
+| update, preference | any `stance` | **UPDATE**: the manager is the authority on their own preferences; latest statement wins |
+| insert, observation | any `stance` (ignored: there is no row to compare against) | **INSERT** |
+| update, observation | `stance` = confirms / refines / new (`new` on an update is read as `refines`) | **UPDATE** |
 | update, observation | `stance` = contradicts | **FLAG**: insert as `conflicted` with `conflicts_with_id`; old row stays `active` |
+
+The table is total: every combination of insert/update x kind x stance lands in exactly one row, and one unit test
+enumerates all of them.
 
 - UPDATE = `UPDATE memories SET status='superseded' WHERE id=:old` then `INSERT ... replaces_id=:old`, in that order,
   in the turn's single transaction (the partial unique index needs the old row out of `active` first).
+- A preference UPDATE keeps the old row's `key`; a different key from the model is ignored, so it cannot collide
+  with another active key.
 - FLAG exists for observations only, because two contradicting business facts cannot both be right and the model
   cannot know which is current. Until resolved, the assistant keeps using the old one (only `active` rows are
   recalled).
@@ -239,13 +257,16 @@ After validation, each candidate gets exactly one decision:
 
 ### 5.4 Retrieval (feature 5)
 
-`recall(session, message) -> str`, called in `chat_turn` before `run_operator`. One query each:
+`recall(session, message, history) -> str`, called in `chat_turn` before `run_operator`. One query each:
 
 - **Preferences - exact.** All active preferences, ordered by key, capped at 20. They are global settings, so every
   turn sees all of them; "exact search" means by key, never by similarity.
-- **Observations - relevance.** Full-text search on `search`, any of the message's words, best 5 by `ts_rank`,
-  newer first on ties. `:terms` is the message's words joined with `" or "` in Python; `websearch_to_tsquery` never
-  raises on odd input and drops English stop words:
+- **Observations - relevance.** Full-text search on `search`, best 5 by `ts_rank`, newer first on ties. `:terms` is
+  built in Python from the words of the **latest two user messages** (so a follow-up like "And what about July?"
+  still finds the jeans note, S10), minus `RECALL_IGNORE` - a short list of words almost every message in this
+  domain contains (`sale`, `sales`, `store`, `shop`, `week`, `month`, `today`, `report`, `show`, `give`) and that
+  would otherwise pull in unrelated notes - joined with `" or "`. `websearch_to_tsquery` never raises on odd input
+  and drops English stop words:
 
   ```sql
   SELECT ... FROM memories, websearch_to_tsquery('english', :terms) q
@@ -335,7 +356,11 @@ Monitoring is one log line per decision, like the existing `tool_call` lines:
 ```
 memory decision=SKIP reason=business_data kind=observation conversation=... content="Jeans did 26,684 in Sep"
 memory decision=UPDATE kind=preference key=report_week replaces=...
+memory recall conversation=... preferences=3 observations=1 ids=... terms="jeans or july"
 ```
+
+The `recall` line shows which notes each turn was given, so "why did it say that?" and `RECALL_IGNORE` tuning can be
+answered from the logs.
 
 Counting `decision`/`reason` over a week answers the two questions that matter: is it remembering anything, and
 which gate rejects the most. No metrics stack is needed yet.
@@ -379,9 +404,9 @@ checks show misses in practice, do 1b. Until then FTS is free, local and exact.
 |---|---|---|
 | R1 | Extraction quality on the real model | **Spiked (section 15):** 42/42 runs worked, 41/42 matched the expected result. The one miss (a refinement tagged `contradicts`) leads to a FLAG, which the manager resolves |
 | R2 | The model invents an `updates_id`, or mislabels `kind` | Gate 1: `updates_id` must be one of the ids sent; kind-specific fields must be filled |
-| R4 | Persistent prompt injection: pasted text becomes a memory that steers future chats | Evidence gate (manager's own message only), 300-char cap, notes placed after the rules and labelled as never overriding them, and every action still needs human approval |
+| R4 | Persistent prompt injection: pasted text becomes a memory that steers future chats | Evidence gate (manager's own message only; gate 2b blocks "remember that" pointing at values that exist only in tool results), 300-char cap, notes placed after the rules and labelled as never overriding them, and every action still needs human approval |
 | R5 | A wrong memory degrades every later chat | Evidence gate, conservative gates, `GET`/`DELETE`, append-only history |
-| R6 | Gates too strict: nothing gets remembered | SKIP reasons in logs; tune the 0.8 trigram threshold from real data |
+| R6 | Gates too strict: nothing gets remembered | SKIP reasons in logs; tune the 0.8 trigram threshold and `RECALL_IGNORE` from real data |
 | R7 | Groq's on-demand tier allows 8,000 tokens per minute per model. One extraction is about 1.3k tokens, and a chat turn already makes 2-4 model calls, so extraction can push chat into 429 errors | The skip filter (5.1) removes most turns. Extraction retries a 429 up to 3 times, waiting 20 s each time; that is fine because it runs in the background. If chat still sees 429s, run extraction on another Groq model, which has its own per-model quota (D5) |
 
 ## 11. Testing
@@ -393,7 +418,7 @@ checks show misses in practice, do 1b. Until then FTS is free, local and exact.
 - **Flow**: `ScriptedModel` already scripts structured output as a tool call named after the schema (like
   `route()` and `plan()` in `tests/scripted_model.py`), so S1-S8 run end to end with an `extraction(...)` helper
   that scripts an `Extraction` call. Assert on the rows written and on the notes block the agent was shown
-  (`ScriptedModel.seen`).
+  (`ScriptedModel.seen`). S1-S11 all run this way.
 - **API**: list filters, delete, accept, 404/409 cases.
 - **Spike (manual, not CI)**: R1 against real Groq.
 
@@ -402,8 +427,8 @@ checks show misses in practice, do 1b. Until then FTS is free, local and exact.
 0. ~~Spike LangMem on Groq (R1).~~ Done, section 15. Extractor chosen (D4).
 1. Migration 0004, model, repository + repository tests.
 2. Gates and `decide` + unit tests.
-3. `remember` (extract -> validate -> decide -> apply) + flow tests S3-S7.
-4. `recall` + notes in agent and planner + flow tests S1, S2.
+3. `remember` (extract -> validate -> decide -> apply) + flow tests S3-S9, S11.
+4. `recall` + notes in agent and planner + flow tests S1, S2, S10.
 5. Background wiring in `/ai/chat`.
 6. Memory endpoints + tests.
 7. README section.
