@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from app.ai.tools.sales import get_sales_trends
+from app.ai.tools.sales import get_sales_summary, get_sales_trends
 
 
 def at(day: str, clock: str = "12:00:00") -> datetime:
@@ -79,3 +79,34 @@ async def test_range_too_long_returns_message_instead_of_raising():
     result = await get_sales_trends.ainvoke({"start_date": "2020-01-01", "end_date": "2025-01-01"})
     assert "narrow it" in result
     assert "1000" in result
+
+
+async def test_summary_totals_and_per_category_breakdown(make_product, add_sale):
+    jeans = await make_product(category="Jeans", price="50.00")
+    tees = await make_product(category="T-Shirts", price="10.00")
+    await add_sale(jeans, at("2025-03-03"), quantity=2)
+    await add_sale(tees, at("2025-03-04"), quantity=3)
+    await add_sale(tees, at("2025-03-06"))  # after end_date: excluded
+
+    body = json.loads(await get_sales_summary.ainvoke({"start_date": "2025-03-03", "end_date": "2025-03-05"}))
+
+    assert (body["total_revenue"], body["total_units"], body["sale_count"], body["average_sale_value"]) == (
+        "130.00", 5, 2, "65.00"
+    )
+    assert [(c["category"], c["revenue"]) for c in body["by_category"]] == [("Jeans", "100.00"), ("T-Shirts", "30.00")]
+
+
+async def test_summary_category_filter_and_empty_range(make_product, add_sale):
+    jeans = await make_product(category="Jeans", price="50.00")
+    await add_sale(jeans, at("2025-03-03"))
+
+    only_tees = json.loads(await get_sales_summary.ainvoke(
+        {"start_date": "2025-03-03", "end_date": "2025-03-03", "category": "t-shirts"}
+    ))
+
+    assert (only_tees["total_revenue"], only_tees["sale_count"], only_tees["by_category"]) == ("0", 0, [])
+
+
+async def test_summary_rejects_reversed_dates():
+    with pytest.raises(ValidationError):
+        await get_sales_summary.ainvoke({"start_date": "2025-03-06", "end_date": "2025-03-05"})

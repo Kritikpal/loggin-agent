@@ -49,6 +49,11 @@ async def test_campaign_creation_only_persists_a_draft(client):
     assert resp.status_code == 201
     body = resp.json()
     assert body["status"] == "draft" and body["discount_percent"] == "15.50"
+    assert body["category"] is None  # optional
+    with_category = await client.post("/api/v1/campaigns", json={
+        "name": "Denim", "message": "m", "category": " Jeans ", "discount_percent": "5",
+    })
+    assert with_category.json()["category"] == "Jeans"
 
     fetched = (await client.get(f"/api/v1/campaigns/{body['id']}")).json()
     assert fetched == body

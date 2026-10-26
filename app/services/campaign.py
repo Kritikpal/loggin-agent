@@ -24,14 +24,20 @@ class CampaignService:
             raise NotFoundError(f"Campaign {campaign_id} not found")
         return CampaignRead.model_validate(campaign)
 
-    async def create(self, data: CampaignCreate) -> CampaignRead:
-        """Persists a DRAFT only. Sending messages / applying discounts is deliberately out of scope."""
+    async def create(
+        self, data: CampaignCreate, status: str = "draft", campaign_id: uuid.UUID | None = None
+    ) -> CampaignRead:
+        """The API always creates drafts; the AI workflow passes status='approved' and a fixed id after a human
+        approved it. Sending messages / applying discounts is deliberately out of scope."""
+        fixed_id = {"id": campaign_id} if campaign_id else {}  # else the model's uuid4 default applies
         campaign = await self.campaigns.add(
             Campaign(
+                **fixed_id,
                 name=data.name,
                 message=data.message,
+                category=data.category,
                 discount_percent=data.discount_percent,
-                status="draft",
+                status=status,
             )
         )
         await self.session.commit()

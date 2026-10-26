@@ -9,8 +9,13 @@ api (FastAPI routers)  ->  services (business rules, transactions)  ->  reposito
 
 `app/services/*` depend only on an `AsyncSession`, so a future LangChain tool can do
 `async with SessionLocal() as s: await SaleService(s).summary(filters)` with no HTTP in between.
-`app/ai/` holds the assistant: `tools/` (read-only sales and inventory tools), `agents/` (the tool-calling agent),
-`actions/` (action planning and validation) and `graphs/` (the LangGraph workflow and its PostgreSQL checkpointer).
+`app/ai/` holds the assistant: `tools/` (read-only tools), `agents/` (the tool-calling agent),
+`actions/` (action planning, validation and execution) and `graphs/` (the LangGraph workflow and its PostgreSQL
+checkpointer).
+
+The agent's read-only tools: `get_sales_trends` (daily revenue/units), `get_sales_summary` (totals and per-category
+breakdown), `get_inventory_status` (current stock) and `find_customers` (name/email search, marketing consent). Customer
+email and phone are never sent to the model, and customers are not linked to sales.
 
 ### AI chat and human approval
 
@@ -18,7 +23,21 @@ api (FastAPI routers)  ->  services (business rules, transactions)  ->  reposito
 planned, validated (discount 0-50%, existing product category, required fields) and paused for approval:
 `status: WAITING_APPROVAL` with the `proposed_action` and a `thread_id`. Then
 `POST /api/v1/ai/workflows/{thread_id}/resume` with `{"decision": "APPROVED" | "REJECTED"}` gives
-`APPROVED_PENDING_EXECUTION` or `REJECTED`. Nothing is executed: no campaign is created yet.
+`EXECUTED` or `REJECTED`. On approval the campaign is created with `status = "approved"`, its `category` set, and
+`id` equal to the `thread_id`, and is returned in `campaign`. Nothing is sent to customers and no prices change. If the
+creation fails, the workflow stays waiting and can be approved again without creating a duplicate.
+
+### Conversations
+
+Every chat response includes a `conversation_id`. Send it back with the next message to continue the conversation;
+omit it to start a new one (an unknown id is a 404). The last 10 messages are given to the agent, router and planner,
+so follow-ups like "and for jeans only?" or "run 15% on that category" work. Turns are stored in `chat_messages`
+(text only, no tool output) and only when they succeed.
+
+While a proposal is waiting, a clear yes or no in the same conversation approves or rejects it; the AI decides
+whether the message is a decision, and anything unclear ("make it 10%") is answered as a normal message, leaving the
+proposal pending. "Yes" always means the newest proposal. The resume endpoint still works and records its outcome in
+the conversation.
 
 Workflow state lives in PostgreSQL (LangGraph checkpoint tables, created on startup in the app database, not by
 Alembic), so a waiting workflow survives a server restart. On Windows, psycopg's async mode needs the selector event
@@ -79,7 +98,7 @@ Copy-Item .env.example .env
 | | `GET /sales/summary` | revenue, units, sale count, average sale value, per-category breakdown |
 | | `GET /sales/trends` | `granularity=day\|week\|month`; bucketed in PostgreSQL, empty periods returned as zeros |
 | Customers | `GET /customers`, `POST /customers` | filters: `marketing_consent`, `search` |
-| Campaigns | `GET /campaigns`, `GET /campaigns/{id}`, `POST /campaigns` | creation always stores `status = "draft"`; nothing is sent |
+| Campaigns | `GET /campaigns`, `GET /campaigns/{id}`, `POST /campaigns` | creation always stores `status = "draft"` (optional `category`); nothing is sent |
 
 Conventions
 - Lists return `{items, total, page, page_size}` (`page` >= 1, `page_size` 1-200, default 50).

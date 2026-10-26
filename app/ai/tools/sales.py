@@ -47,3 +47,15 @@ async def get_sales_trends(start_date: date, end_date: date, category: str | Non
 
 
 get_sales_trends.handle_tool_error = True  # ToolException text goes back to the model instead of raising
+
+
+@tool(args_schema=SalesTrendsInput)  # same date range + category inputs as the trend tool
+async def get_sales_summary(start_date: date, end_date: date, category: str | None = None) -> str:
+    """Sales totals between two dates: total revenue, units, sale count and average sale value, plus the same
+    totals per product category (highest revenue first). Optionally for one category. Returns JSON.
+    Use for "how much did we sell", best/worst categories, category share or comparing categories. It has no
+    day-by-day breakdown (use get_sales_trends for that) and no stock data (use get_inventory_status)."""
+    filters = SalesFilters(date_from=start_date, date_to=end_date, category=category)
+    async with asynccontextmanager(get_session)() as session:
+        summary = await SaleService(session).summary(filters)
+    return summary.model_dump_json()

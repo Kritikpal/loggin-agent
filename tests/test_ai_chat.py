@@ -24,66 +24,12 @@ from app.core.config import get_settings
 from app.main import create_app
 from app.models import Campaign, Inventory
 from app.services.sale import SaleService
+from tests.scripted_model import CAMPAIGN, ScriptedModel, call, plan, route, stock_call
 
 pytestmark = pytest.mark.usefixtures("tool_session", "checkpointer")
 
 URL = "/api/v1/ai/chat"
 RESUME = "/api/v1/ai/workflows/{}/resume"
-
-
-class ScriptedModel(BaseChatModel):
-    """Replays canned AIMessages and records the messages it was shown on each turn."""
-
-    script: list[AIMessage]
-    seen: list[list[BaseMessage]]
-
-    @property
-    def _llm_type(self) -> str:
-        return "scripted"
-
-    def bind_tools(self, tools, **kwargs):
-        return self
-
-    def _generate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
-        self.seen.append(list(messages))
-        step = len(self.seen) - 1
-        if step >= len(self.script):
-            raise RuntimeError("model called more often than scripted")
-        return ChatResult(generations=[ChatGeneration(message=self.script[step])])
-
-
-def call(args: dict, call_id: str = "c1", tool: str = "get_sales_trends") -> AIMessage:
-    return AIMessage(content="", tool_calls=[{"name": tool, "args": args, "id": call_id}])
-
-
-def stock_call(args: dict, call_id: str = "c1") -> AIMessage:
-    return call(args, call_id, tool="get_inventory_status")
-
-
-def route(value: str) -> AIMessage:
-    """The router's structured-output turn. It always follows the agent's final answer in a script."""
-    return call({"route": value}, "r1", tool="Decision")
-
-
-CAMPAIGN = {
-    "name": "Summer Jeans Sale", "message": "20% off all jeans this week.", "category": "jeans", "discount_percent": 20,
-}
-
-
-def plan(action_type: str = "CREATE_CAMPAIGN", **overrides) -> AIMessage:
-    """The action planner's structured-output turn. It follows the router's ACTION verdict in a script."""
-    fields = {**CAMPAIGN, **overrides} if action_type == "CREATE_CAMPAIGN" else overrides
-    return call({"action_type": action_type, **fields}, "p1", tool="ActionPlan")
-
-
-@pytest.fixture
-def use_model(client):
-    def _use(*script: AIMessage) -> ScriptedModel:
-        model = ScriptedModel(script=list(script), seen=[])
-        client._transport.app.dependency_overrides[chat_model] = lambda: model
-        return model
-
-    return _use
 
 
 def tool_outputs(model: ScriptedModel) -> list[ToolMessage]:
@@ -194,6 +140,22 @@ async def test_single_inventory_tool_scenario(client, use_model, make_product):
     assert [(i["sku"], i["quantity"], i["reorder_level"], i["stock_status"]) for i in result["items"]] == [
         ("JN-1", 2, 5, "low_stock"),
     ]
+
+
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("get_sales_summary", {"start_date": "2025-03-01", "end_date": "2025-03-31"}),
+        ("find_customers", {"marketing_consent": True}),
+    ],
+)
+async def test_agent_can_call_the_summary_and_customer_tools(client, use_model, tool, args):
+    use_model(call(args, tool=tool), AIMessage("Done."), route("ANSWER"))
+
+    body = (await client.post(URL, json={"message": "question"})).json()
+
+    [record] = body["tool_calls"]
+    assert (record["name"], record["status"]) == (tool, "success")
 
 
 async def test_multi_tool_scenario_second_call_follows_first_result(client, use_model, make_product, add_sale):
@@ -428,10 +390,39 @@ async def test_unusable_router_output_fails_closed_to_the_action_path(client, us
     assert "nothing was changed" in body["response"].lower()
 
 
+HISTORY = [{"role": "user", "content": "Sales in September 2026?"}, {"role": "assistant", "content": "$59,205."}]
+
+
+async def test_agent_sees_history_before_the_new_message():
+    model = ScriptedModel(script=[AIMessage("Jeans: $26,684.")], seen=[])
+
+    await business_agent.chat(model, "And for jeans only?", history=HISTORY)
+
+    turns = [(type(m).__name__, m.text) for m in model.seen[0] if not isinstance(m, SystemMessage)]
+    assert turns == [
+        ("HumanMessage", "Sales in September 2026?"), ("AIMessage", "$59,205."), ("HumanMessage", "And for jeans only?"),
+    ]
+
+
+async def test_router_and_planner_see_the_history(make_product, checkpointer):
+    await make_product(category="Jeans")
+    model = ScriptedModel(script=[AIMessage("ok"), route("ACTION"), plan()], seen=[])
+
+    await operator_graph.run_operator(model, checkpointer, "Run 20% on that category", HISTORY)
+
+    for call_input in (model.seen[1], model.seen[2]):  # router, planner
+        text = "\n".join(m.text for m in call_input)
+        assert "Conversation so far:\nuser: Sales in September 2026?\nassistant: $59,205." in text
+
+
+def test_with_history_leaves_text_unchanged_without_history():
+    assert operator_graph.with_history([], "Hi") == "Hi"
+
+
 # ---- human in the loop ------------------------------------------------------------------------------------------
 
 
-async def test_approval_resumes_the_checkpointed_thread_and_executes_nothing(client, use_model, make_product, session):
+async def test_approval_creates_exactly_the_approved_campaign(client, use_model, make_product, session):
     model, waiting = await start_workflow(client, use_model, make_product)
     calls_before = len(model.seen)
 
@@ -439,12 +430,42 @@ async def test_approval_resumes_the_checkpointed_thread_and_executes_nothing(cli
 
     body = res.json()
     assert res.status_code == 200
-    assert body["status"] == "APPROVED_PENDING_EXECUTION"
+    assert body["status"] == "EXECUTED"
     assert body["thread_id"] == waiting["thread_id"]
     assert body["proposed_action"] == waiting["proposed_action"]  # exactly what was validated and shown
     assert body["tool_calls"] == waiting["tool_calls"]
     assert len(model.seen) == calls_before  # approving does not consult the model again
-    assert await campaign_count(session) == 0
+    campaign = body["campaign"]
+    assert campaign["id"] == waiting["thread_id"]  # one workflow can only ever create one campaign
+    assert campaign["status"] == "approved"
+    assert {k: campaign[k] for k in ("name", "message", "category", "discount_percent")} == {
+        k: waiting["proposed_action"][k] for k in ("name", "message", "category", "discount_percent")
+    }
+    assert await campaign_count(session) == 1
+    stored = (await client.get(f"/api/v1/campaigns/{campaign['id']}")).json()
+    assert stored == campaign
+
+
+async def test_failed_execution_keeps_the_workflow_waiting_and_a_retry_creates_one_campaign(
+    client, use_model, make_product, session, monkeypatch
+):
+    _, waiting = await start_workflow(client, use_model, make_product)
+    url = RESUME.format(waiting["thread_id"])
+    real = operator_graph.campaign_action.execute_proposal
+
+    async def write_then_crash(proposal, campaign_id):
+        await real(proposal, campaign_id)  # the row is written, then the step dies before checkpointing
+        raise RuntimeError("connection lost")
+
+    monkeypatch.setattr(operator_graph.campaign_action, "execute_proposal", write_then_crash)
+    assert (await client.post(url, json={"decision": "APPROVED"})).status_code == 503
+
+    monkeypatch.setattr(operator_graph.campaign_action, "execute_proposal", real)
+    res = await client.post(url, json={"decision": "APPROVED"})  # still waiting, so it can be approved again
+
+    assert res.status_code == 200
+    assert res.json()["status"] == "EXECUTED"
+    assert await campaign_count(session) == 1  # the retry found the first attempt's row instead of duplicating it
 
 
 async def test_rejection_ends_the_workflow(client, use_model, make_product, session):
@@ -468,7 +489,7 @@ async def test_a_finished_workflow_cannot_be_decided_twice(client, use_model, ma
 
     assert res.status_code == 409
     assert res.json()["error"]["code"] == "conflict"
-    assert "APPROVED_PENDING_EXECUTION" in res.json()["error"]["message"]
+    assert "EXECUTED" in res.json()["error"]["message"]
 
 
 async def test_answered_workflow_is_not_resumable(client, use_model, checkpointer):
@@ -545,7 +566,7 @@ async def test_waiting_workflow_is_stored_in_postgres_and_survives_a_restart(
         res = await client.post(RESUME.format(waiting["thread_id"]), json={"decision": "APPROVED"})
 
     assert res.status_code == 200
-    assert res.json()["status"] == "APPROVED_PENDING_EXECUTION"
+    assert res.json()["status"] == "EXECUTED"
     assert res.json()["proposed_action"] == waiting["proposed_action"]
 
 
@@ -628,7 +649,16 @@ async def test_unexpected_graph_failure_returns_503_envelope(client, use_model, 
 def test_system_prompt_keeps_grounding_and_evidence_rules():
     # Tool names are not in the prompt: create_agent hands the model the tool schemas (see the scenario tests).
     prompt = business_agent.SYSTEM_PROMPT
-    for needle in ("Use tools for all sales and inventory facts", "Never invent numbers", "verified findings from possible causes"):
+    for needle in ("Use tools for all sales, inventory and customer facts", "Never invent numbers",
+                   "verified findings from possible causes", "Earlier messages in the conversation are context",
+                   "Call tools again for every number"):
+        assert needle in prompt
+
+
+def test_system_prompt_states_capabilities_limits_and_style():
+    prompt = business_agent.SYSTEM_PROMPT
+    for needle in ("promotional campaign", "only after they approve", "cannot forecast", "Keep replies short",
+                   "no tables, no HTML"):
         assert needle in prompt
 
 

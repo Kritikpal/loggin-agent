@@ -1,30 +1,36 @@
 """Hybrid graph: the read-only agent investigates, a router sends the request to ANSWER or ACTION, and an ACTION is
-planned, validated and then held for human approval. Nothing is ever executed here.
+planned, validated and then held for human approval. Only an approved proposal is executed (the campaign row is
+created with status 'approved'); nothing is sent to customers or applied to prices.
 
     START -> agent_node -> decision_node --ANSWER--> END
                                          \\-ACTION--> planner_node -> validate_node --invalid--> END
                                                                                      \\-valid--> approval_node -> END
 
 approval_node pauses with interrupt(); POST /ai/workflows/{id}/resume continues it with APPROVED or REJECTED.
+If creating the campaign fails, the node fails before its checkpoint is written, so the workflow stays waiting and
+the approval can be retried; the campaign id is the thread id, so a retry never creates a second campaign.
 The proposal is produced once, by validate_node, and checkpointed. The resume carries only the decision, so what a
 human approves is always the stored, validated proposal. State holds plain JSON values so it checkpoints cleanly.
 """
 
+import json
 import logging
 import uuid
 from typing import Literal, NotRequired, TypedDict
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 from pydantic import BaseModel, Field
 
+from app.ai.actions import campaign as campaign_action
 from app.ai.actions.campaign import ActionPlan, validate_plan
 from app.ai.agents.business_agent import chat
 from app.core.errors import AIUnavailableError, AppError, ConflictError, NotFoundError
-from app.schemas.ai import ChatResponse
+from app.schemas.ai import ChatResponse, ProposedAction
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +38,9 @@ Route = Literal["ANSWER", "ACTION"]
 ApprovalDecision = Literal["APPROVED", "REJECTED"]
 
 WAITING_TEXT = "I prepared this action and need your approval before anything happens. Nothing has been changed yet."
-APPROVED_TEXT = "Approved. Executing actions is not enabled yet, so it is pending execution and nothing was changed."
+EXECUTED_TEXT = (
+    "Approved. The campaign was created with status 'approved'. Nothing was sent to customers and no prices changed."
+)
 REJECTED_TEXT = "Rejected. Nothing was changed."
 
 DECISION_PROMPT = """
@@ -56,6 +64,25 @@ UNSUPPORTED: any other change (restocking, price changes, deleting, sending mess
 """
 
 
+APPROVAL_PROMPT = """
+Decide whether the user's new message approves or rejects the pending proposal.
+
+APPROVE: the message clearly says yes to this proposal (e.g. "yes", "go ahead", "approve it").
+REJECT: the message clearly says no to this proposal (e.g. "no", "cancel it", "don't").
+OTHER: anything else - questions, requests to change the proposal ("make it 10%"), new requests, or anything unclear.
+"""
+
+Verdict = Literal["APPROVE", "REJECT", "OTHER"]
+
+
+class ApprovalVerdict(BaseModel):
+    """Whether a chat message decides the pending proposal."""
+
+    decision: Verdict = Field(
+        description="APPROVE or REJECT only when the message clearly decides the pending proposal; otherwise OTHER"
+    )
+
+
 class Decision(BaseModel):
     """The router's verdict on what the user is asking for."""
 
@@ -68,6 +95,15 @@ class OperatorState(TypedDict):
     decision: NotRequired[Route]
     plan: NotRequired[dict | None]
     proposal: NotRequired[dict]  # present only when the plan passed validation
+    history: NotRequired[list[dict]]  # earlier conversation turns, oldest first: {"role", "content"}
+
+
+def with_history(history: list[dict], text: str) -> str:
+    """Prefix a structured-output call's input with the conversation so far (unchanged when there is none)."""
+    if not history:
+        return text
+    lines = "\n".join(f"{h['role']}: {h['content']}" for h in history)
+    return f"Conversation so far:\n{lines}\n\n{text}"
 
 
 def route_after_decision(state: OperatorState) -> Route:
@@ -97,16 +133,18 @@ async def _structured[T: BaseModel](model: BaseChatModel, schema: type[T], syste
 
 def build_graph(model: BaseChatModel, checkpointer: BaseCheckpointSaver):
     async def agent_node(state: OperatorState) -> dict:
-        return {"result": (await chat(model, state["message"])).model_dump(mode="json")}  # read-only tools only
+        response = await chat(model, state["message"], history=state.get("history", []))  # read-only tools only
+        return {"result": response.model_dump(mode="json")}
 
     async def decision_node(state: OperatorState) -> dict:
-        verdict = await _structured(model, Decision, DECISION_PROMPT, state["message"])
+        human = with_history(state.get("history", []), state["message"])
+        verdict = await _structured(model, Decision, DECISION_PROMPT, human)
         # fail closed: an unusable verdict must never pass for a plain answer
         return {"decision": verdict.route if verdict else "ACTION"}
 
     async def planner_node(state: OperatorState) -> dict:
         request = f"Request:\n{state['message']}\n\nRead-only findings:\n{state['result']['response']}"
-        plan = await _structured(model, ActionPlan, PLAN_PROMPT, request)
+        plan = await _structured(model, ActionPlan, PLAN_PROMPT, with_history(state.get("history", []), request))
         return {"plan": plan.model_dump() if plan else None}
 
     async def validate_node(state: OperatorState) -> dict:
@@ -118,15 +156,18 @@ def build_graph(model: BaseChatModel, checkpointer: BaseCheckpointSaver):
         text = f"I couldn't prepare that action ({reasons}). Nothing was changed."
         return {"result": {**state["result"], "status": "INVALID_ACTION", "response": text}}
 
-    async def approval_node(state: OperatorState) -> dict:
+    async def approval_node(state: OperatorState, config: RunnableConfig) -> dict:
         decision = interrupt({"proposed_action": state["proposal"]})  # pauses here; resumed with APPROVED/REJECTED
+        result = {**state["result"], "proposed_action": state["proposal"]}
         if decision == "APPROVED":
-            status, text = "APPROVED_PENDING_EXECUTION", APPROVED_TEXT
-        elif decision == "REJECTED":
-            status, text = "REJECTED", REJECTED_TEXT
-        else:
-            raise ValueError(f"Unexpected approval decision: {decision!r}")
-        return {"result": {**state["result"], "status": status, "response": text, "proposed_action": state["proposal"]}}
+            campaign = await campaign_action.execute_proposal(  # module attribute, so tests can make it fail
+                ProposedAction.model_validate(state["proposal"]), uuid.UUID(config["configurable"]["thread_id"])
+            )
+            return {"result": result | {"status": "EXECUTED", "response": EXECUTED_TEXT,
+                                        "campaign": campaign.model_dump(mode="json")}}
+        if decision == "REJECTED":
+            return {"result": result | {"status": "REJECTED", "response": REJECTED_TEXT}}
+        raise ValueError(f"Unexpected approval decision: {decision!r}")
 
     graph = StateGraph(OperatorState)
     graph.add_node("agent_node", agent_node)
@@ -171,8 +212,11 @@ async def _run(graph, payload, thread_id: str) -> ChatResponse:
         raise AIUnavailableError("The AI assistant could not complete the request. Try again shortly.") from exc
 
 
-async def run_operator(model: BaseChatModel, checkpointer: BaseCheckpointSaver, message: str) -> ChatResponse:
-    return await _run(build_graph(model, checkpointer), {"message": message}, str(uuid.uuid4()))
+async def run_operator(
+    model: BaseChatModel, checkpointer: BaseCheckpointSaver, message: str, history: list[dict] | None = None
+) -> ChatResponse:
+    payload = {"message": message, "history": history or []}
+    return await _run(build_graph(model, checkpointer), payload, str(uuid.uuid4()))
 
 
 async def resume_operator(
@@ -190,3 +234,20 @@ async def resume_operator(
         status = snapshot.values.get("result", {}).get("status", "UNKNOWN")
         raise ConflictError(f"Workflow {thread_id} is not waiting for approval (status: {status})")
     return await _run(graph, Command(resume=decision), thread_id)
+
+
+async def pending_proposal(checkpointer: BaseCheckpointSaver, thread_id: str) -> dict | None:
+    """The workflow's stored proposal if it is waiting for approval, else None (decided, missing, or never paused)."""
+    try:
+        snapshot = await build_graph(None, checkpointer).aget_state({"configurable": {"thread_id": thread_id}})
+    except Exception as exc:
+        logger.exception("Could not read workflow %s", thread_id)
+        raise AIUnavailableError("The workflow could not be loaded. Try again shortly.") from exc
+    return snapshot.values["proposal"] if _is_waiting(snapshot) else None
+
+
+async def classify_approval(model: BaseChatModel, proposal: dict, history: list[dict], message: str) -> Verdict:
+    """Does `message` decide the pending proposal? Fails closed: an unusable answer is OTHER, never a decision."""
+    human = with_history(history, f"Pending proposal:\n{json.dumps(proposal)}\n\nNew message:\n{message}")
+    verdict = await _structured(model, ApprovalVerdict, APPROVAL_PROMPT, human)
+    return verdict.decision if verdict else "OTHER"

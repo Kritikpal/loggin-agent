@@ -1,17 +1,22 @@
+import uuid
 from decimal import Decimal
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.campaign import CampaignRead
 from app.schemas.common import text
 
-WorkflowStatus = Literal["COMPLETED", "WAITING_APPROVAL", "APPROVED_PENDING_EXECUTION", "REJECTED", "INVALID_ACTION"]
+WorkflowStatus = Literal["COMPLETED", "WAITING_APPROVAL", "EXECUTED", "REJECTED", "INVALID_ACTION"]
 
 
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     message: text(2000) = Field(description="Natural-language question about sales")
+    conversation_id: uuid.UUID | None = Field(
+        default=None, description="Continue this conversation; omit to start a new one (returned in the response)"
+    )
 
 
 class ToolCallRecord(BaseModel):
@@ -25,7 +30,7 @@ class ToolCallRecord(BaseModel):
 
 
 class ProposedAction(BaseModel):
-    """A validated CREATE_CAMPAIGN proposal. This exact object is what a human approves; nothing is executed."""
+    """A validated CREATE_CAMPAIGN proposal. This exact object is what a human approves, and what is created."""
 
     action_type: Literal["CREATE_CAMPAIGN"] = "CREATE_CAMPAIGN"
     name: str
@@ -40,6 +45,8 @@ class ChatResponse(BaseModel):
     status: WorkflowStatus = Field(default="COMPLETED", description="COMPLETED for questions; see the workflow states")
     thread_id: str | None = Field(default=None, description="Workflow id for POST /ai/workflows/{thread_id}/resume")
     proposed_action: ProposedAction | None = None
+    campaign: CampaignRead | None = Field(default=None, description="The campaign created when status is EXECUTED")
+    conversation_id: uuid.UUID | None = Field(default=None, description="Send it back to continue the conversation")
 
 
 class ResumeRequest(BaseModel):

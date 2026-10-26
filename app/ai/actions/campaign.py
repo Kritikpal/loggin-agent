@@ -1,6 +1,7 @@
-"""CREATE_CAMPAIGN: what the planner may propose, and the deterministic rules a proposal must pass before a human
-is asked to approve it. No model is involved in validation."""
+"""CREATE_CAMPAIGN: what the planner may propose, the deterministic rules a proposal must pass before a human
+is asked to approve it, and its execution once approved. No model is involved in validation or execution."""
 
+import uuid
 from contextlib import asynccontextmanager
 from decimal import Decimal
 from typing import Literal
@@ -8,10 +9,12 @@ from typing import Literal
 from pydantic import BaseModel, Field, ValidationError
 
 from app.core.database import get_session
+from app.core.errors import NotFoundError
 from app.repositories.product import ProductFilters
 from app.schemas.ai import ProposedAction
-from app.schemas.campaign import CampaignCreate
+from app.schemas.campaign import CampaignCreate, CampaignRead
 from app.schemas.common import Pagination
+from app.services.campaign import CampaignService
 from app.services.product import ProductService
 
 MAX_DISCOUNT_PERCENT = Decimal("50")  # guardrail: deeper promotions are not something the assistant may propose
@@ -46,7 +49,10 @@ async def validate_plan(plan: ActionPlan | None) -> tuple[ProposedAction | None,
 
     try:  # reuse the campaign API's own field rules (lengths, 0-100, two decimals)
         campaign = CampaignCreate(
-            name=plan.name, message=plan.message, discount_percent=Decimal(str(plan.discount_percent))
+            name=plan.name,
+            message=plan.message,
+            category=plan.category,
+            discount_percent=Decimal(str(plan.discount_percent)),
         )
     except ValidationError as exc:
         return None, [f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors()]
@@ -68,3 +74,21 @@ async def validate_plan(plan: ActionPlan | None) -> tuple[ProposedAction | None,
         category=found.items[0].category,  # the catalogue's own spelling
         discount_percent=campaign.discount_percent.quantize(CENTS),
     ), []
+
+
+async def execute_proposal(proposal: ProposedAction, campaign_id: uuid.UUID) -> CampaignRead:
+    """Create the approved campaign. `campaign_id` is the workflow's thread id, so retrying an approval whose
+    first attempt already wrote the row returns that row instead of creating a duplicate."""
+    async with asynccontextmanager(get_session)() as session:
+        service = CampaignService(session)
+        try:
+            return await service.get(campaign_id)
+        except NotFoundError:
+            pass
+        data = CampaignCreate(
+            name=proposal.name,
+            message=proposal.message,
+            category=proposal.category,
+            discount_percent=proposal.discount_percent,
+        )
+        return await service.create(data, status="approved", campaign_id=campaign_id)

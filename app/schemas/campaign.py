@@ -18,6 +18,7 @@ class CampaignCreate(BaseModel):
 
     name: text(200)
     message: Text = Field(max_length=5000)
+    category: text(100) | None = Field(default=None, description="Product category the campaign targets")
     discount_percent: Annotated[Decimal, Field(ge=0, le=100, max_digits=5, decimal_places=2)]
 
 
@@ -27,6 +28,7 @@ class CampaignRead(BaseModel):
     id: uuid.UUID
     name: str
     message: str
+    category: str | None
     discount_percent: Decimal
     status: str
     created_at: datetime

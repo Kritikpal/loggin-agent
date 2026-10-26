@@ -21,19 +21,21 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from app.core.config import get_settings
 from app.ai.actions import campaign as campaign_action
 from app.ai.graphs.checkpointer import open_checkpointer
+from app.ai.tools import customers as customers_tool
 from app.ai.tools import inventory as inventory_tool
 from app.ai.tools import sales as sales_tool
-from app.api.v1.ai import get_checkpointer
+from app.api.v1.ai import chat_model, get_checkpointer
 from app.core.database import get_session
 from app.main import create_app
 from app.models import Inventory, Product, Sale
 from scripts.create_database import ensure_database
+from tests.scripted_model import ScriptedModel
 
 if sys.platform == "win32":  # psycopg's async mode (the LangGraph checkpointer) cannot run on the default ProactorEventLoop
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 ROOT = Path(__file__).resolve().parents[1]
-TABLES = "sales, inventory, products, customers, campaigns"
+TABLES = "sales, inventory, products, customers, campaigns, chat_messages"
 CHECKPOINT_TABLES = "checkpoints, checkpoint_blobs, checkpoint_writes"
 
 
@@ -101,7 +103,7 @@ def tool_session(monkeypatch, session_factory: async_sessionmaker[AsyncSession])
         async with session_factory() as s:
             yield s
 
-    for module in (sales_tool, inventory_tool, campaign_action):
+    for module in (sales_tool, inventory_tool, customers_tool, campaign_action):
         monkeypatch.setattr(module, "get_session", override)
 
 
@@ -151,3 +153,15 @@ async def add_sale(session_factory: async_sessionmaker[AsyncSession]):
             await s.commit()
 
     return _add
+
+
+@pytest.fixture
+def use_model(client):
+    """Serve a ScriptedModel replaying `script` to the AI endpoints; returns it so tests can inspect `seen`."""
+
+    def _use(*script) -> ScriptedModel:
+        model = ScriptedModel(script=list(script), seen=[])
+        client._transport.app.dependency_overrides[chat_model] = lambda: model
+        return model
+
+    return _use
