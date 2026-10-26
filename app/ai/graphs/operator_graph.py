@@ -58,8 +58,8 @@ Turn the user's request into one action.
 CREATE_CAMPAIGN: a promotional campaign for one product category. Fill name, message, category and discount_percent
 (a number such as 15 for 15%).
 - Draft a short name and a customer-facing message if the user did not give them.
-- Take category and discount_percent only from the user's words or the read-only findings. Never guess them:
-  leave them null when they are not stated.
+- Take category and discount_percent only from the user's words, the read-only findings or the manager's saved
+  preferences. Never guess them: leave them null when they are not stated.
 UNSUPPORTED: any other change (restocking, price changes, deleting, sending messages, ...). Say why in `reason`.
 """
 
@@ -96,6 +96,7 @@ class OperatorState(TypedDict):
     plan: NotRequired[dict | None]
     proposal: NotRequired[dict]  # present only when the plan passed validation
     history: NotRequired[list[dict]]  # earlier conversation turns, oldest first: {"role", "content"}
+    notes: NotRequired[str]  # the manager's saved notes for this turn; only the agent and the planner see them
 
 
 def with_history(history: list[dict], text: str) -> str:
@@ -133,7 +134,9 @@ async def _structured[T: BaseModel](model: BaseChatModel, schema: type[T], syste
 
 def build_graph(model: BaseChatModel, checkpointer: BaseCheckpointSaver):
     async def agent_node(state: OperatorState) -> dict:
-        response = await chat(model, state["message"], history=state.get("history", []))  # read-only tools only
+        response = await chat(  # read-only tools only
+            model, state["message"], history=state.get("history", []), notes=state.get("notes", "")
+        )
         return {"result": response.model_dump(mode="json")}
 
     async def decision_node(state: OperatorState) -> dict:
@@ -144,6 +147,8 @@ def build_graph(model: BaseChatModel, checkpointer: BaseCheckpointSaver):
 
     async def planner_node(state: OperatorState) -> dict:
         request = f"Request:\n{state['message']}\n\nRead-only findings:\n{state['result']['response']}"
+        if state.get("notes"):
+            request += f"\n\n{state['notes']}"
         plan = await _structured(model, ActionPlan, PLAN_PROMPT, with_history(state.get("history", []), request))
         return {"plan": plan.model_dump() if plan else None}
 
@@ -213,9 +218,10 @@ async def _run(graph, payload, thread_id: str) -> ChatResponse:
 
 
 async def run_operator(
-    model: BaseChatModel, checkpointer: BaseCheckpointSaver, message: str, history: list[dict] | None = None
+    model: BaseChatModel, checkpointer: BaseCheckpointSaver, message: str, history: list[dict] | None = None,
+    notes: str = "",
 ) -> ChatResponse:
-    payload = {"message": message, "history": history or []}
+    payload = {"message": message, "history": history or [], "notes": notes}
     return await _run(build_graph(model, checkpointer), payload, str(uuid.uuid4()))
 
 

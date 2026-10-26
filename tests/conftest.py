@@ -24,7 +24,7 @@ from app.ai.graphs.checkpointer import open_checkpointer
 from app.ai.tools import customers as customers_tool
 from app.ai.tools import inventory as inventory_tool
 from app.ai.tools import sales as sales_tool
-from app.api.v1.ai import chat_model, get_checkpointer
+from app.api.v1.ai import chat_model, get_checkpointer, memory_sessions
 from app.core.database import get_session
 from app.main import create_app
 from app.models import Inventory, Product, Sale
@@ -85,6 +85,7 @@ async def client(session_factory: async_sessionmaker[AsyncSession]) -> AsyncIter
             yield session
 
     app.dependency_overrides[get_session] = override
+    app.dependency_overrides[memory_sessions] = lambda: None  # memory is off unless a test turns it on (memory_on)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
         yield http
 

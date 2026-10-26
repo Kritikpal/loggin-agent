@@ -69,11 +69,12 @@ async def _tool_errors_to_model(request, handler):
         return ToolMessage(content=content, tool_call_id=request.tool_call["id"], status="error")
 
 
-def build_agent(model: BaseChatModel, today: date):
+def build_agent(model: BaseChatModel, today: date, notes: str = ""):
+    prompt = SYSTEM_PROMPT.format(today=today.isoformat(), weekday=today.strftime("%A"))
     return create_agent(
         model,
         tools=[get_sales_trends, get_sales_summary, get_inventory_status, find_customers],
-        system_prompt=SYSTEM_PROMPT.format(today=today.isoformat(), weekday=today.strftime("%A")),
+        system_prompt=f"{prompt}\n{notes}" if notes else prompt,  # saved notes come after the rules
         middleware=[_tool_errors_to_model],
     )
 
@@ -94,10 +95,11 @@ def _tool_calls(messages: list) -> list[ToolCallRecord]:
 
 
 async def chat(
-    model: BaseChatModel, message: str, today: date | None = None, history: list[dict] | None = None
+    model: BaseChatModel, message: str, today: date | None = None, history: list[dict] | None = None, notes: str = ""
 ) -> ChatResponse:
-    """`history`: earlier turns, oldest first, as {"role": "user" | "assistant", "content": str}."""
-    agent = build_agent(model, today or utc_today())
+    """`history`: earlier turns, oldest first, as {"role": "user" | "assistant", "content": str}.
+    `notes`: the manager's saved notes (see app.ai.memory.recall), added to the system prompt."""
+    agent = build_agent(model, today or utc_today(), notes)
     earlier = [HumanMessage(h["content"]) if h["role"] == "user" else AIMessage(h["content"]) for h in history or []]
     try:
         state = await agent.ainvoke({"messages": [*earlier, HumanMessage(message)]}, {"recursion_limit": MAX_STEPS})

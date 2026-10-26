@@ -1,15 +1,17 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from langchain_core.language_models import BaseChatModel
 from langchain_groq import ChatGroq
 from langgraph.checkpoint.base import BaseCheckpointSaver
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.ai.conversation import chat_turn, record_button_decision
 from app.ai.graphs.operator_graph import resume_operator
 from app.api.deps import SessionDep
 from app.core.config import get_settings
+from app.core.database import SessionLocal
 from app.core.errors import AIUnavailableError
 from app.schemas.ai import ChatRequest, ChatResponse, ResumeRequest
 
@@ -30,18 +32,30 @@ def get_checkpointer(request: Request) -> BaseCheckpointSaver:
     return saver
 
 
+def memory_sessions() -> async_sessionmaker[AsyncSession] | None:
+    """Where long-term memory is saved from the background; None turns saving off (tests override it)."""
+    return SessionLocal
+
+
 ChatModelDep = Annotated[BaseChatModel, Depends(chat_model)]
 CheckpointerDep = Annotated[BaseCheckpointSaver, Depends(get_checkpointer)]
+MemorySessionsDep = Annotated[async_sessionmaker[AsyncSession] | None, Depends(memory_sessions)]
 
 
 @router.post("/chat", response_model=ChatResponse, summary="Ask the sales assistant a question")
 async def ai_chat(
-    data: ChatRequest, session: SessionDep, model: ChatModelDep, checkpointer: CheckpointerDep
+    data: ChatRequest,
+    session: SessionDep,
+    model: ChatModelDep,
+    checkpointer: CheckpointerDep,
+    background: BackgroundTasks,
+    sessions: MemorySessionsDep,
 ) -> ChatResponse:
     """Questions are answered directly. A request to change something is planned and validated, then returned as
     `WAITING_APPROVAL` with a `thread_id`; nothing happens until it is approved, either with a clear yes/no in the
-    same conversation or via the resume endpoint. Send `conversation_id` back to continue a conversation."""
-    return await chat_turn(session, model, checkpointer, data.message, data.conversation_id)
+    same conversation or via the resume endpoint. Send `conversation_id` back to continue a conversation.
+    Lasting preferences and observations the manager states are saved to memory after the reply is sent."""
+    return await chat_turn(session, model, checkpointer, data.message, data.conversation_id, background, sessions)
 
 
 @router.post(
