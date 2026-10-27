@@ -231,6 +231,98 @@ async def test_the_model_is_shown_the_existing_memories_with_their_ids(session, 
     assert "Actually make my reports Sunday to Saturday." in shown
 
 
+REWORDED = "Actually denim demand only dips in the rainy season now, mostly in July."
+
+
+def flagged_obs(old: Memory, content="Monsoon no longer affects jeans.") -> Memory:
+    return Memory(
+        kind="observation", subject="Jeans", content=content, attributes={}, evidence="x", status="conflicted",
+        conflicts_with_id=old.id, content_hash=content_hash(content),
+    )
+
+
+async def seed_conflict(session) -> tuple[Memory, Memory]:
+    old = saved_obs()
+    await seed(session, old)
+    flag = flagged_obs(old)
+    await seed(session, flag)
+    return old, flag
+
+
+async def test_a_reworded_correction_is_shown_the_note_it_corrects(session, session_factory):
+    old = saved_obs()  # shares no search word with REWORDED ("denim", "rainy season" vs "jeans", "monsoon")
+    await seed(session, old)
+    model = scripted(extraction())
+
+    await run(model, session_factory, REWORDED)
+
+    assert str(old.id) in model.seen[0][-1].content
+
+
+async def test_the_extractor_sees_at_most_30_observations_and_matches_come_first(session, session_factory):
+    jeans = saved_obs()
+    await seed(session, jeans)
+    await seed(session, *(saved_obs(f"Supplier {i} delivers late on Fridays.") for i in range(35)))
+    model = scripted(extraction())
+
+    await run(model, session_factory, "Jeans are slow when it rains, remember that.")
+
+    shown = model.seen[0][-1].content
+    assert str(jeans.id) in shown and shown.count('"kind": "observation"') == 30
+
+
+async def test_a_flagged_correction_is_shown_to_the_extractor(session, session_factory):
+    _, flag = await seed_conflict(session)
+    model = scripted(extraction())
+
+    await run(model, session_factory, "Remember what I said about the rain and denim.")
+
+    shown = model.seen[0][-1].content
+    assert str(flag.id) in shown and '"status": "conflicted"' in shown
+
+
+def by_content(rows: list[Memory]) -> dict[str, Memory]:
+    return {m.content: m for m in rows}
+
+
+async def test_restating_a_flagged_correction_settles_it(session, session_factory, caplog):
+    caplog.set_level(logging.INFO)
+    old, flag = await seed_conflict(session)
+    again = obs_c(content=flag.content, evidence="monsoon no longer affects jeans")
+
+    await run(scripted(extraction(again)), session_factory, "I told you, monsoon no longer affects jeans.")
+
+    rows = await stored(session_factory)
+    assert [m.status for m in rows[:2]] == ["superseded", "superseded"]  # the old note and the flag
+    [new] = [m for m in rows if m.status == "active"]
+    assert new.content == flag.content and new.replaces_id == flag.id
+    assert "decision=RESOLVE" in caplog.text
+
+
+async def test_changing_a_flagged_correction_settles_it_with_the_new_wording(session, session_factory):
+    old, flag = await seed_conflict(session)
+    refined = obs_c(updates_id=str(flag.id), stance="refines", content="Monsoon only affects jeans in July now.",
+                    evidence="monsoon only affects jeans in July now")
+
+    await run(scripted(extraction(refined)), session_factory, "Well, monsoon only affects jeans in July now.")
+
+    rows = by_content(await stored(session_factory))
+    assert rows[old.content].status == rows[flag.content].status == "superseded"
+    assert rows["Monsoon only affects jeans in July now."].status == "active"
+
+
+async def test_contradicting_the_same_note_twice_settles_it(session, session_factory):
+    old, flag = await seed_conflict(session)
+    second = obs_c(updates_id=str(old.id), stance="contradicts", content="Rain makes no difference to jeans sales.",
+                   evidence="rain makes no difference to jeans")
+
+    await run(scripted(extraction(second)), session_factory, "Again: rain makes no difference to jeans.")
+
+    rows = by_content(await stored(session_factory))
+    assert rows[old.content].status == rows[flag.content].status == "superseded"
+    assert rows["Rain makes no difference to jeans sales."].status == "active"
+
+
 async def test_a_failing_candidate_does_not_stop_the_others(session_factory):
     phone = obs_c(content="The supplier is on +91 98765 43210.", evidence="supplier is on +91 98765 43210")
     said = f"{WEEKLY} The supplier is on +91 98765 43210."

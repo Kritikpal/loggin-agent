@@ -3,27 +3,19 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from langchain_core.language_models import BaseChatModel
-from langchain_groq import ChatGroq
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.ai.conversation import chat_turn, record_button_decision
 from app.ai.graphs.operator_graph import resume_operator
+from app.ai.llm import chat_model, fast_chat_model
 from app.api.deps import CONFLICT, NOT_FOUND, MemoryServiceDep, SessionDep
-from app.core.config import get_settings
 from app.core.database import SessionLocal
 from app.core.errors import AIUnavailableError
 from app.schemas.ai import ChatRequest, ChatResponse, ResumeRequest
 from app.schemas.memory import MemoryKind, MemoryRead, MemoryStatus
 
 router = APIRouter(prefix="/ai", tags=["AI"])
-
-
-def chat_model() -> BaseChatModel:
-    settings = get_settings()
-    if not settings.groq_api_key:
-        raise AIUnavailableError("The AI assistant is not configured (GROQ_API_KEY is missing).")
-    return ChatGroq(model=settings.groq_model, api_key=settings.groq_api_key, temperature=0, timeout=30, max_retries=1)
 
 
 def get_checkpointer(request: Request) -> BaseCheckpointSaver:
@@ -39,6 +31,9 @@ def memory_sessions() -> async_sessionmaker[AsyncSession] | None:
 
 
 ChatModelDep = Annotated[BaseChatModel, Depends(chat_model)]
+FastModelDep = Annotated[BaseChatModel, Depends(fast_chat_model)]
+# Built separately (use_cache=False), so the background memory extraction takes the next API key, not the agent's.
+MemoryModelDep = Annotated[BaseChatModel, Depends(chat_model, use_cache=False)]
 CheckpointerDep = Annotated[BaseCheckpointSaver, Depends(get_checkpointer)]
 MemorySessionsDep = Annotated[async_sessionmaker[AsyncSession] | None, Depends(memory_sessions)]
 
@@ -48,6 +43,8 @@ async def ai_chat(
     data: ChatRequest,
     session: SessionDep,
     model: ChatModelDep,
+    fast_model: FastModelDep,
+    memory_model: MemoryModelDep,
     checkpointer: CheckpointerDep,
     background: BackgroundTasks,
     sessions: MemorySessionsDep,
@@ -56,7 +53,10 @@ async def ai_chat(
     `WAITING_APPROVAL` with a `thread_id`; nothing happens until it is approved, either with a clear yes/no in the
     same conversation or via the resume endpoint. Send `conversation_id` back to continue a conversation.
     Lasting preferences and observations the manager states are saved to memory after the reply is sent."""
-    return await chat_turn(session, model, checkpointer, data.message, data.conversation_id, background, sessions)
+    return await chat_turn(
+        session, model, checkpointer, data.message, data.conversation_id, background, sessions,
+        fast_model=fast_model, memory_model=memory_model,
+    )
 
 
 @router.get("/memories", response_model=list[MemoryRead], summary="List what the assistant remembers (newest first)")

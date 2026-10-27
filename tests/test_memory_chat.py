@@ -32,22 +32,22 @@ def memory_on(client, session_factory):
 
 
 async def test_memory_is_off_unless_enabled(client, use_model, session_factory):
-    model = use_model(AIMessage("Noted."), route("ANSWER"), extraction(PREFERENCE))
+    model = use_model(AIMessage("Noted."), extraction(PREFERENCE))
 
     await client.post(URL, json={"message": WEEKLY})
 
-    assert len(model.seen) == 2 and await memories(session_factory) == []  # agent + router only
+    assert len(model.seen) == 1 and await memories(session_factory) == []  # the agent only: no router, no extraction
 
 
 @pytest.mark.usefixtures("memory_on")
 async def test_s1_a_preference_said_in_one_conversation_is_followed_in_the_next(client, use_model, session_factory):
-    use_model(AIMessage("Noted."), route("ANSWER"), extraction(PREFERENCE))
-    first = (await client.post(URL, json={"message": WEEKLY})).json()
+    use_model(AIMessage("Noted."), extraction(PREFERENCE))
+    first =(await client.post(URL, json={"message": WEEKLY})).json()
 
     [saved] = await memories(session_factory)
     assert (saved.key, str(saved.source_conversation_id)) == ("report_week", first["conversation_id"])
 
-    model = use_model(AIMessage("Last week (Mon-Sun): 3 units."), route("ANSWER"), extraction())
+    model = use_model(AIMessage("Last week (Mon-Sun): 3 units."), extraction())
     second = (await client.post(URL, json={"message": "How did sales go last week?"})).json()
 
     prompt = next(m.text for m in model.seen[0] if isinstance(m, SystemMessage))
@@ -57,7 +57,7 @@ async def test_s1_a_preference_said_in_one_conversation_is_followed_in_the_next(
 
 @pytest.mark.usefixtures("memory_on")
 async def test_s7_a_failed_extraction_changes_nothing_for_the_manager(client, use_model, session_factory):
-    use_model(AIMessage("Noted."), route("ANSWER"))  # nothing scripted for the extraction call: it fails
+    use_model(AIMessage("Noted."))  # nothing scripted for the extraction call: it fails
 
     res = await client.post(URL, json={"message": WEEKLY})
 

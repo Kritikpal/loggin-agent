@@ -2,6 +2,7 @@ import uuid
 from collections.abc import Sequence
 
 from sqlalchemy import func, select, update
+from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Memory
@@ -45,6 +46,22 @@ class MemoryRepository:
             Memory.kind == kind, Memory.status.in_(LIVE), func.similarity(Memory.content, content) >= floor
         )
         return bool(await self.session.scalar(select(match.exists())))
+
+    async def open_conflict(self, memory_id: uuid.UUID) -> Memory | None:
+        """The newest flagged row that contradicts `memory_id`, if one is still waiting for review."""
+        return await self.session.scalar(
+            select(Memory).where(Memory.status == "conflicted", Memory.conflicts_with_id == memory_id)
+            .order_by(Memory.created_at.desc()).limit(1)
+        )
+
+    async def open_conflicts(self, limit: int) -> list[tuple[Memory, Memory | None]]:
+        """Flagged rows waiting for review, newest first, each with the note it contradicts."""
+        earlier = aliased(Memory)
+        rows = await self.session.execute(
+            select(Memory, earlier).outerjoin(earlier, Memory.conflicts_with_id == earlier.id)
+            .where(Memory.status == "conflicted").order_by(Memory.created_at.desc()).limit(limit)
+        )
+        return [(flag, old) for flag, old in rows.tuples()]
 
     async def supersede(self, memory_id: uuid.UUID) -> None:
         """Take a row out of `active`. Must run before inserting its replacement: the partial unique index on

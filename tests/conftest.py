@@ -39,6 +39,12 @@ TABLES = "sales, inventory, products, customers, campaigns, chat_messages, memor
 CHECKPOINT_TABLES = "checkpoints, checkpoint_blobs, checkpoint_writes"
 
 
+@pytest.fixture(autouse=True)
+def no_fast_model_from_env(monkeypatch):
+    """A developer's GROQ_FAST_MODEL in .env must not turn the scripted-model tests into real network calls."""
+    monkeypatch.setattr(get_settings(), "groq_fast_model", None)
+
+
 def _test_url() -> str:
     settings = get_settings()
     url = settings.resolved_test_database_url

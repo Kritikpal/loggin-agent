@@ -157,6 +157,13 @@ def test_duplicate_rules():
     assert duplicate(cand(), turn(), known()) is True
 
 
+def test_settling_a_flagged_correction_is_never_a_duplicate():
+    flag = memory(status="conflicted")
+    assert duplicate(cand(), turn(), known(flagged=flag, similar=True)) is True
+    assert decide(cand(), known(flagged=flag)) is Decision.RESOLVE
+    assert decide(cand(updates_id="x", stance="contradicts"), known(flagged=flag)) is Decision.RESOLVE
+
+
 # --- gate 6: safety_rule -----------------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("candidate, ok", [
