@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from app.ai.tools.sales import get_sales_summary, get_sales_trends
+from app.ai.tools.sales import compare_sales_periods, get_sales_summary, get_sales_trends
 
 
 def at(day: str, clock: str = "12:00:00") -> datetime:
@@ -110,3 +110,53 @@ async def test_summary_category_filter_and_empty_range(make_product, add_sale):
 async def test_summary_rejects_reversed_dates():
     with pytest.raises(ValidationError):
         await get_sales_summary.ainvoke({"start_date": "2025-03-06", "end_date": "2025-03-05"})
+
+
+WEEKS = {"a_start": "2025-03-03", "a_end": "2025-03-09", "b_start": "2025-03-10", "b_end": "2025-03-16"}
+
+
+async def test_compare_sales_periods_reports_both_and_change(make_product, add_sale):
+    p = await make_product(price="10.00")
+    await add_sale(p, at("2025-03-03"), quantity=4)  # A: 40.00
+    await add_sale(p, at("2025-03-10"), quantity=3)  # B: 30.00
+
+    body = json.loads(await compare_sales_periods.ainvoke(WEEKS))
+
+    assert (body["period_a"]["revenue"], body["period_b"]["revenue"]) == ("40.00", "30.00")
+    assert (body["period_a"]["units"], body["period_b"]["units"]) == (4, 3)
+    assert (body["revenue_change"], body["revenue_change_percent"]) == ("-10.00", "-25.00")
+
+
+async def test_compare_sales_periods_zero_base_has_null_percent(make_product, add_sale):
+    p = await make_product(price="10.00")
+    await add_sale(p, at("2025-03-10"))
+
+    body = json.loads(await compare_sales_periods.ainvoke(WEEKS))
+
+    assert body["revenue_change_percent"] is None
+
+
+async def test_compare_sales_periods_rejects_a_reversed_period():
+    with pytest.raises(ValidationError):
+        await compare_sales_periods.ainvoke({**WEEKS, "a_start": "2025-03-10"})
+
+
+async def test_summary_rows_carry_share_percent(make_product, add_sale):
+    jeans = await make_product(category="Jeans", price="30.00")
+    tees = await make_product(category="T-Shirts", price="10.00")
+    await add_sale(jeans, at("2025-03-03"))
+    await add_sale(tees, at("2025-03-03"))
+
+    raw = await get_sales_summary.ainvoke({"start_date": "2025-03-03", "end_date": "2025-03-03"})
+
+    rows = json.loads(raw)["by_category"]
+    assert {r["category"]: r["share_percent"] for r in rows} == {"Jeans": "75.00", "T-Shirts": "25.00"}
+
+
+async def test_summary_keeps_non_ascii_text_so_the_injection_check_sees_it(make_product, add_sale):
+    p = await make_product(category="Ｊｅａｎｓ​")  # fullwidth letters and a zero-width space
+    await add_sale(p, at("2025-03-03"))
+
+    raw = await get_sales_summary.ainvoke({"start_date": "2025-03-03", "end_date": "2025-03-03"})
+
+    assert "Ｊｅａｎｓ​" in raw  # escaped "\uff2a..." would slip past injection()

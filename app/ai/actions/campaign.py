@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
+from app.ai.guardrails import campaign_text, trip
 from app.core.database import get_session
 from app.core.errors import NotFoundError
 from app.repositories.product import ProductFilters
@@ -57,7 +58,9 @@ async def validate_plan(plan: ActionPlan | None) -> tuple[ProposedAction | None,
     except ValidationError as exc:
         return None, [f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors()]
 
-    errors = []
+    errors = campaign_text(campaign.name, campaign.message, campaign.discount_percent)  # customer-facing text rules
+    if errors:
+        trip("campaign", "campaign_text", campaign.message)
     if not 0 < campaign.discount_percent <= MAX_DISCOUNT_PERCENT:
         errors.append(f"Discount must be more than 0% and at most {MAX_DISCOUNT_PERCENT}%.")
     category = plan.category.strip()
