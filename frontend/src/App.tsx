@@ -12,7 +12,19 @@ import {
   PlusIcon,
   ReloadIcon,
 } from '@radix-ui/react-icons'
-import { ApiError, resumeWorkflow, sendChat, type Campaign, type ChatResponse, type ProposedAction, type ToolCall, type WorkflowStatus } from './api'
+import {
+  ApiError,
+  resumeWorkflow,
+  sendChat,
+  settleConflict,
+  type Campaign,
+  type ChatResponse,
+  type ConflictChoice,
+  type MemoryConflict,
+  type ProposedAction,
+  type ToolCall,
+  type WorkflowStatus,
+} from './api'
 
 const MAX_LEN = 2000 // ChatRequest.message limit
 const EXAMPLES = [
@@ -25,6 +37,7 @@ const STATUS: Record<Exclude<WorkflowStatus, 'COMPLETED'>, { color: 'amber' | 'j
   EXECUTED: { color: 'jade', label: 'Campaign created' },
   REJECTED: { color: 'gray', label: 'Rejected' },
   INVALID_ACTION: { color: 'red', label: 'Action not valid' },
+  BLOCKED: { color: 'red', label: 'Blocked' },
 }
 const ERROR_TITLE: Record<string, string> = {
   network: 'Offline.',
@@ -38,6 +51,8 @@ const ERROR_TITLE: Record<string, string> = {
 
 type Decision = 'APPROVED' | 'REJECTED'
 type DecisionState = { pending: Decision } | { reply: ChatResponse } | { error: ApiError }
+// SETTLED: already settled elsewhere, e.g. the manager restated the correction in chat (the API answers 404 or 409)
+type ConflictState = { pending: ConflictChoice } | { done: ConflictChoice | 'SETTLED' } | { error: ApiError }
 interface Turn {
   id: number
   message: string
@@ -52,13 +67,14 @@ export default function App() {
   const [turns, setTurns] = useState<Turn[]>([])
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [decisions, setDecisions] = useState<Record<string, DecisionState>>({})
+  const [conflictStates, setConflictStates] = useState<Record<string, ConflictState>>({})
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [turns, decisions])
+  }, [turns, decisions, conflictStates])
 
   const patchTurn = (id: number, patch: Partial<Turn>) => setTurns((ts) => ts.map((t) => (t.id === id ? { ...t, ...patch } : t)))
 
@@ -93,6 +109,22 @@ export default function App() {
     }
   }
 
+  async function settle(memoryId: string, choice: ConflictChoice) {
+    setConflictStates((s) => ({ ...s, [memoryId]: { pending: choice } }))
+    try {
+      await settleConflict(memoryId, choice)
+      setConflictStates((s) => ({ ...s, [memoryId]: { done: choice } }))
+    } catch (e) {
+      const err = toApiError(e)
+      const gone = err.status === 404 || err.status === 409
+      setConflictStates((s) => ({ ...s, [memoryId]: gone ? { done: 'SETTLED' } : { error: err } }))
+    }
+  }
+
+  // Every reply carries the open conflicts; each is shown once per chat, under the first reply that had it.
+  const conflictTurn = new Map<string, number>()
+  for (const t of turns) for (const c of t.reply?.memory_conflicts ?? []) if (!conflictTurn.has(c.id)) conflictTurn.set(c.id, t.id)
+
   // A proposal is settled by its button, or by a later "yes"/"no" chat turn that resumed the same thread.
   function outcomeFor(threadId: string) {
     const d = decisions[threadId]
@@ -109,6 +141,7 @@ export default function App() {
     setTurns([])
     setConversationId(null)
     setDecisions({})
+    setConflictStates({})
     setDraft('')
   }
 
@@ -144,7 +177,13 @@ export default function App() {
                 </Box>
               </Flex>
               {turn.reply ? (
-                <Reply reply={turn.reply} decisions={decisions} outcomeFor={outcomeFor} onDecide={decide} />
+                <Reply reply={turn.reply} decisions={decisions} outcomeFor={outcomeFor} onDecide={decide}>
+                  {turn.reply.memory_conflicts
+                    .filter((c) => conflictTurn.get(c.id) === turn.id)
+                    .map((c) => (
+                      <ConflictCard key={c.id} conflict={c} state={conflictStates[c.id]} onSettle={(choice) => settle(c.id, choice)} />
+                    ))}
+                </Reply>
               ) : turn.error ? (
                 <ErrorCallout error={turn.error}>
                   {i === turns.length - 1 && turn.error.code !== 'validation_error' && (
@@ -249,9 +288,10 @@ interface ReplyProps {
   decisions: Record<string, DecisionState>
   outcomeFor: (threadId: string) => ChatResponse | undefined
   onDecide: (threadId: string, d: Decision) => void
+  children?: ReactNode
 }
 
-function Reply({ reply, decisions, outcomeFor, onDecide }: ReplyProps) {
+function Reply({ reply, decisions, outcomeFor, onDecide, children }: ReplyProps) {
   const status = reply.status === 'COMPLETED' ? null : STATUS[reply.status]
   const threadId = reply.thread_id
   return (
@@ -273,6 +313,7 @@ function Reply({ reply, decisions, outcomeFor, onDecide }: ReplyProps) {
         />
       )}
       {reply.campaign && <CampaignCard campaign={reply.campaign} />}
+      {children}
       {reply.tool_calls.length > 0 && <ToolCalls calls={reply.tool_calls} />}
     </Flex>
   )
@@ -319,6 +360,63 @@ function ProposalCard({ action, state, outcome, onDecide }: ProposalProps) {
         {error && <ErrorCallout error={error} />}
         {/* a chat "yes" shows its campaign in its own turn; only the button result is shown here */}
         {state && 'reply' in state && state.reply.campaign && <CampaignCard campaign={state.reply.campaign} />}
+      </Flex>
+    </Card>
+  )
+}
+
+const CONFLICT_OUTCOME: Record<ConflictChoice | 'SETTLED', string> = {
+  USE_NEW: 'Updated. The assistant will use your new note from now on.',
+  KEEP_EARLIER: 'Kept the earlier note. The new one was discarded.',
+  SETTLED: 'Already settled. Nothing more to do.',
+}
+
+interface ConflictProps {
+  conflict: MemoryConflict
+  state?: ConflictState
+  onSettle: (choice: ConflictChoice) => void
+}
+
+function ConflictCard({ conflict: c, state, onSettle }: ConflictProps) {
+  const pending = state && 'pending' in state ? state.pending : null
+  const done = state && 'done' in state ? state.done : null
+  const error = state && 'error' in state ? state.error : null
+  return (
+    <Card size="2">
+      <Flex direction="column" gap="3">
+        <Flex align="center" gap="2" wrap="wrap">
+          <Badge color="amber">Memory conflict</Badge>
+          <Text size="2" color="gray">
+            Which note should the assistant use?
+          </Text>
+        </Flex>
+        <DataList.Root size="2">
+          {c.earlier_content && <Field label="Earlier note">{c.earlier_content}</Field>}
+          <Field label="You said">&ldquo;{c.evidence}&rdquo;</Field>
+          <Field label="New note">{c.content}</Field>
+        </DataList.Root>
+        {done ? (
+          <Callout.Root size="1" color={done === 'USE_NEW' ? 'jade' : 'gray'}>
+            <Callout.Icon>{done === 'USE_NEW' ? <CheckCircledIcon /> : <InfoCircledIcon />}</Callout.Icon>
+            <Callout.Text>{CONFLICT_OUTCOME[done]}</Callout.Text>
+          </Callout.Root>
+        ) : (
+          <Flex gap="2" wrap="wrap">
+            <Button loading={pending === 'USE_NEW'} disabled={!!pending} onClick={() => onSettle('USE_NEW')}>
+              <CheckIcon /> Use the new note
+            </Button>
+            <Button
+              variant="soft"
+              color="gray"
+              loading={pending === 'KEEP_EARLIER'}
+              disabled={!!pending}
+              onClick={() => onSettle('KEEP_EARLIER')}
+            >
+              Keep the earlier one
+            </Button>
+          </Flex>
+        )}
+        {error && <ErrorCallout error={error} />}
       </Flex>
     </Card>
   )

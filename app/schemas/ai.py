@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, Literal
 
@@ -7,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.schemas.campaign import CampaignRead
 from app.schemas.common import text
 
-WorkflowStatus = Literal["COMPLETED", "WAITING_APPROVAL", "EXECUTED", "REJECTED", "INVALID_ACTION"]
+WorkflowStatus = Literal["COMPLETED", "WAITING_APPROVAL", "EXECUTED", "REJECTED", "INVALID_ACTION", "BLOCKED"]
 
 
 class ChatRequest(BaseModel):
@@ -39,6 +40,18 @@ class ProposedAction(BaseModel):
     discount_percent: Decimal
 
 
+class MemoryConflict(BaseModel):
+    """A correction the manager made that contradicts an earlier note, waiting for review. Settle it with
+    POST /ai/memories/{id}/accept (use the correction) or DELETE /ai/memories/{id} (keep the earlier note)."""
+
+    id: uuid.UUID
+    content: str
+    evidence: str = Field(description="The manager's own words the correction came from")
+    earlier_id: uuid.UUID | None = Field(description="The note it contradicts")
+    earlier_content: str | None
+    created_at: datetime
+
+
 class ChatResponse(BaseModel):
     response: str
     tool_calls: list[ToolCallRecord]
@@ -47,6 +60,9 @@ class ChatResponse(BaseModel):
     proposed_action: ProposedAction | None = None
     campaign: CampaignRead | None = Field(default=None, description="The campaign created when status is EXECUTED")
     conversation_id: uuid.UUID | None = Field(default=None, description="Send it back to continue the conversation")
+    memory_conflicts: list[MemoryConflict] = Field(
+        default_factory=list, description="Open memory conflicts from any conversation, newest first, at most 3"
+    )
 
 
 class ResumeRequest(BaseModel):

@@ -62,22 +62,24 @@ async def test_new_conversation_stores_the_turn(client, use_model, session):
 
 async def test_follow_ups_see_earlier_turns(client, use_model, make_product):
     await make_product(category="Jeans")
-    use_model(AIMessage("September 2026: $59,205."), route("ANSWER"))
+    use_model(AIMessage("September 2026: a strong month."), route("ANSWER"))
     first = (await client.post(URL, json={"message": "Sales in September 2026?"})).json()
     conv = first["conversation_id"]
 
-    second_model = use_model(AIMessage("Jeans in September 2026: $26,684."), route("ANSWER"))
+    second_model = use_model(AIMessage("Jeans in September 2026: steady."), route("ANSWER"))
     second = (await say(client, conv, "And for jeans only?")).json()
 
-    third_model = use_model(AIMessage("Jeans lead."), route("ACTION"), plan(discount_percent=15))
+    third_model = use_model(
+        AIMessage("Jeans lead."), route("ACTION"), plan(discount_percent=15, message="15% off all jeans this week.")
+    )
     third = (await say(client, conv, "Run a 15% campaign on that category")).json()
 
     assert turns(second_model) == [
-        ("HumanMessage", "Sales in September 2026?"), ("AIMessage", "September 2026: $59,205."),
+        ("HumanMessage", "Sales in September 2026?"), ("AIMessage", "September 2026: a strong month."),
         ("HumanMessage", "And for jeans only?"),
     ]
     planner_input = "\n".join(m.text for m in third_model.seen[2])
-    assert "Conversation so far:" in planner_input and "Jeans in September 2026: $26,684." in planner_input
+    assert "<UNTRUSTED_CONVERSATION>" in planner_input and "Jeans in September 2026: steady." in planner_input
     assert third["status"] == "WAITING_APPROVAL" and third["proposed_action"]["discount_percent"] == "15.00"
     assert first["conversation_id"] == second["conversation_id"] == third["conversation_id"]
 

@@ -9,8 +9,9 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.ai.guardrails import BLOCKED_TEXT, injection, trip
 from app.ai.graphs.operator_graph import classify_approval, pending_proposal, resume_operator, run_operator
-from app.ai.memory import recall, remember
+from app.ai.memory import open_conflicts, recall, remember
 from app.core.errors import NotFoundError
 from app.models import ChatMessage
 from app.repositories.chat_message import ChatMessageRepository
@@ -40,9 +41,16 @@ async def chat_turn(
     conversation_id: uuid.UUID | None,
     background: BackgroundTasks | None = None,
     memory_sessions: async_sessionmaker[AsyncSession] | None = None,
+    fast_model: BaseChatModel | None = None,
+    memory_model: BaseChatModel | None = None,
 ) -> ChatResponse:
     """With `background` and `memory_sessions`, what the manager said is also offered to `remember` once the reply
-    has been sent."""
+    has been sent. `fast_model` (default: `model`) serves the router and the approval check; `memory_model`
+    (default: `model`) the background extraction."""
+    if check := injection(message):  # before any model call; the turn is not stored or offered to memory
+        trip("input", check, message, conversation_id)
+        return ChatResponse(response=BLOCKED_TEXT, tool_calls=[], status="BLOCKED", conversation_id=conversation_id)
+    fast_model = fast_model or model
     repo = ChatMessageRepository(session)
     history: list[dict] = []
     thread = None
@@ -54,19 +62,20 @@ async def chat_turn(
             raise NotFoundError(f"Conversation {conversation_id} not found")
         history = [{"role": m.role, "content": m.content} for m in earlier]
         thread = await repo.latest_thread_id(conversation_id)
+    conflicts = await open_conflicts(session, conversation_id)  # flagged on earlier turns, in any conversation
     await session.commit()  # end the read transaction: no connection is held during model calls
 
     response = None
     proposal = await pending_proposal(checkpointer, str(thread)) if thread else None
     if proposal:  # the newest proposal is still waiting: does this message decide it?
-        verdict = await classify_approval(model, proposal, history, message)
+        verdict = await classify_approval(fast_model, proposal, history, message)
         if verdict != "OTHER":
             decision = "APPROVED" if verdict == "APPROVE" else "REJECTED"
             response = await resume_operator(model, checkpointer, str(thread), decision)
     if response is None:
         notes = await recall(session, message, history, conversation_id)
         await session.commit()  # end the recall read transaction: no connection is held during model calls
-        response = await run_operator(model, checkpointer, message, history, notes)
+        response = await run_operator(model, checkpointer, message, history, notes, fast_model=fast_model)
 
     thread_id = uuid.UUID(response.thread_id) if response.thread_id else None
     reply = stored_reply(response)
@@ -77,11 +86,11 @@ async def chat_turn(
     )
     if background is not None and memory_sessions is not None:  # runs after the response is sent
         background.add_task(
-            remember, model, memory_sessions, message=message, reply=reply, status=response.status,
+            remember, memory_model or model, memory_sessions, message=message, reply=reply, status=response.status,
             tool_results="\n".join(c.result or "" for c in response.tool_calls), history=history,
             conversation_id=conversation_id,
         )
-    return response.model_copy(update={"conversation_id": conversation_id})
+    return response.model_copy(update={"conversation_id": conversation_id, "memory_conflicts": conflicts})
 
 
 async def _save(session: AsyncSession, *messages: ChatMessage) -> None:

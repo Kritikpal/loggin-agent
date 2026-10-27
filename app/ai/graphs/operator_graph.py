@@ -1,3 +1,4 @@
+# TODO: SECURITY — run llm-secure-patterns to apply LLM security patterns
 """Hybrid graph: the read-only agent investigates, a router sends the request to ANSWER or ACTION, and an ACTION is
 planned, validated and then held for human approval. Only an approved proposal is executed (the campaign row is
 created with status 'approved'); nothing is sent to customers or applied to prices.
@@ -19,7 +20,6 @@ import uuid
 from typing import Literal, NotRequired, TypedDict
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
@@ -28,7 +28,12 @@ from pydantic import BaseModel, Field
 
 from app.ai.actions import campaign as campaign_action
 from app.ai.actions.campaign import ActionPlan, validate_plan
-from app.ai.agents.business_agent import chat
+from app.ai.agents.business_agent import chat, utc_today
+from app.ai.guardrails import BLOCKED_TEXT, action_claim, contact_details, trip, ungrounded_numbers
+from app.ai.llm import structured_call
+from app.ai.prompts import conversation, load_prompt, untrusted
+from app.ai.routing import is_obviously_question
+from app.ai.telemetry import llm_step
 from app.core.errors import AIUnavailableError, AppError, ConflictError, NotFoundError
 from app.schemas.ai import ChatResponse, ProposedAction
 
@@ -43,34 +48,9 @@ EXECUTED_TEXT = (
 )
 REJECTED_TEXT = "Rejected. Nothing was changed."
 
-DECISION_PROMPT = """
-Classify what the user is asking for.
-
-ANSWER: they only want information or analysis (sales, inventory, trends, explanations, unrelated questions).
-ACTION: they want anything changed or done (restock, reorder, create, update, delete, price changes, discounts,
-campaigns, sending messages), even if they first ask for something to be checked or investigated.
-Requests that mix a question with a change are ACTION.
-"""
-
-PLAN_PROMPT = """
-Turn the user's request into one action.
-
-CREATE_CAMPAIGN: a promotional campaign for one product category. Fill name, message, category and discount_percent
-(a number such as 15 for 15%).
-- Draft a short name and a customer-facing message if the user did not give them.
-- Take category and discount_percent only from the user's words, the read-only findings or the manager's saved
-  preferences. Never guess them: leave them null when they are not stated.
-UNSUPPORTED: any other change (restocking, price changes, deleting, sending messages, ...). Say why in `reason`.
-"""
-
-
-APPROVAL_PROMPT = """
-Decide whether the user's new message approves or rejects the pending proposal.
-
-APPROVE: the message clearly says yes to this proposal (e.g. "yes", "go ahead", "approve it").
-REJECT: the message clearly says no to this proposal (e.g. "no", "cancel it", "don't").
-OTHER: anything else - questions, requests to change the proposal ("make it 10%"), new requests, or anything unclear.
-"""
+DECISION_PROMPT = load_prompt("decision")
+PLAN_PROMPT = load_prompt("plan")
+APPROVAL_PROMPT = load_prompt("approval")
 
 Verdict = Literal["APPROVE", "REJECT", "OTHER"]
 
@@ -103,8 +83,23 @@ def with_history(history: list[dict], text: str) -> str:
     """Prefix a structured-output call's input with the conversation so far (unchanged when there is none)."""
     if not history:
         return text
-    lines = "\n".join(f"{h['role']}: {h['content']}" for h in history)
-    return f"Conversation so far:\n{lines}\n\n{text}"
+    return f"{conversation(history)}\n\n{text}"
+
+
+def unsafe_reply(response: ChatResponse, state: OperatorState) -> str | None:
+    """The first guardrail the agent's reply trips, if any. Allowed numbers come from this turn's tool results, the
+    manager's own words (message, earlier turns, saved notes) and today's date: anything else the model made up."""
+    if check := contact_details(response.response) or action_claim(response.response):
+        return check
+    sources = [
+        *(c.result or "" for c in response.tool_calls), state["message"],
+        *(turn["content"] for turn in state.get("history", [])), state.get("notes", ""), utc_today().isoformat(),
+    ]
+    return "ungrounded_number" if ungrounded_numbers(response.response, sources) else None
+
+
+def route_after_agent(state: OperatorState) -> str:
+    return END if state["result"].get("status") == "BLOCKED" else "decision_node"
 
 
 def route_after_decision(state: OperatorState) -> Route:
@@ -115,41 +110,40 @@ def route_after_validation(state: OperatorState) -> str:
     return "approval_node" if state.get("proposal") else END  # no validated proposal, nothing to approve
 
 
-async def _structured[T: BaseModel](model: BaseChatModel, schema: type[T], system: str, human: str) -> T | None:
-    """Structured-output call. None when the output is unusable: invalid, missing, or the call itself failed.
-    json_schema, not the function-calling default: that forces a tool call, and Groq answers 400
-    ("Tool choice is required") when the model just replies to something like "Hi"."""
-    try:
-        verdict = await model.with_structured_output(schema, method="json_schema").ainvoke(
-            [SystemMessage(system), HumanMessage(human)]
-        )
-    except Exception:  # invalid structured output, provider error, ...
-        logger.exception("%s call failed", schema.__name__)
-        return None
-    if not isinstance(verdict, schema):
-        logger.warning("%s call returned no usable output: %r", schema.__name__, verdict)
-        return None
-    return verdict
+def build_graph(model: BaseChatModel, checkpointer: BaseCheckpointSaver, fast_model: BaseChatModel | None = None):
+    """`fast_model` (default: `model`) serves the router; the agent and the planner always use `model`."""
+    fast_model = fast_model or model
 
-
-def build_graph(model: BaseChatModel, checkpointer: BaseCheckpointSaver):
     async def agent_node(state: OperatorState) -> dict:
-        response = await chat(  # read-only tools only
-            model, state["message"], history=state.get("history", []), notes=state.get("notes", "")
-        )
-        return {"result": response.model_dump(mode="json")}
+        with llm_step("agent"):
+            response = await chat(  # read-only tools only
+                model, state["message"], history=state.get("history", []), notes=state.get("notes", "")
+            )
+        result = response.model_dump(mode="json")
+        if check := unsafe_reply(response, state):
+            trip("reply", check, response.response)
+            return {"result": result | {"status": "BLOCKED", "response": BLOCKED_TEXT}}
+        return {"result": result}
 
     async def decision_node(state: OperatorState) -> dict:
-        human = with_history(state.get("history", []), state["message"])
-        verdict = await _structured(model, Decision, DECISION_PROMPT, human)
+        if is_obviously_question(state["message"], state.get("history", [])):  # no change word: skip the model call
+            logger.info("router shortcut: ANSWER")
+            return {"decision": "ANSWER"}
+        human = with_history(state.get("history", []), untrusted("UNTRUSTED_USER_MESSAGE", state["message"]))
+        verdict = await structured_call(fast_model, Decision, DECISION_PROMPT, human)
         # fail closed: an unusable verdict must never pass for a plain answer
         return {"decision": verdict.route if verdict else "ACTION"}
 
     async def planner_node(state: OperatorState) -> dict:
-        request = f"Request:\n{state['message']}\n\nRead-only findings:\n{state['result']['response']}"
+        # SECURITY: LLM01 (Prompt Injection) — Level B (Moderate). Pattern: system_prompt_template — the findings are
+        # the agent's reply and can quote database text, so the request and findings sit inside UNTRUSTED tags and
+        # PLAN_PROMPT treats them as data. validate_plan and human approval stay the real guard.
+        # Applied by: llm-secure-patterns v1.0.0 / System Prompt Design, 2026-10-27.
+        request = (f"{untrusted('UNTRUSTED_USER_REQUEST', state['message'])}\n\n"
+                   f"{untrusted('UNTRUSTED_FINDINGS', state['result']['response'])}")
         if state.get("notes"):
             request += f"\n\n{state['notes']}"
-        plan = await _structured(model, ActionPlan, PLAN_PROMPT, with_history(state.get("history", []), request))
+        plan = await structured_call(model, ActionPlan, PLAN_PROMPT, with_history(state.get("history", []), request))
         return {"plan": plan.model_dump() if plan else None}
 
     async def validate_node(state: OperatorState) -> dict:
@@ -181,7 +175,7 @@ def build_graph(model: BaseChatModel, checkpointer: BaseCheckpointSaver):
     graph.add_node("validate_node", validate_node)
     graph.add_node("approval_node", approval_node)
     graph.add_edge(START, "agent_node")
-    graph.add_edge("agent_node", "decision_node")
+    graph.add_conditional_edges("agent_node", route_after_agent, {"decision_node": "decision_node", END: END})
     graph.add_conditional_edges("decision_node", route_after_decision, {"ANSWER": END, "ACTION": "planner_node"})
     graph.add_edge("planner_node", "validate_node")
     graph.add_conditional_edges(
@@ -219,10 +213,10 @@ async def _run(graph, payload, thread_id: str) -> ChatResponse:
 
 async def run_operator(
     model: BaseChatModel, checkpointer: BaseCheckpointSaver, message: str, history: list[dict] | None = None,
-    notes: str = "",
+    notes: str = "", fast_model: BaseChatModel | None = None,
 ) -> ChatResponse:
     payload = {"message": message, "history": history or [], "notes": notes}
-    return await _run(build_graph(model, checkpointer), payload, str(uuid.uuid4()))
+    return await _run(build_graph(model, checkpointer, fast_model), payload, str(uuid.uuid4()))
 
 
 async def resume_operator(
@@ -254,6 +248,7 @@ async def pending_proposal(checkpointer: BaseCheckpointSaver, thread_id: str) ->
 
 async def classify_approval(model: BaseChatModel, proposal: dict, history: list[dict], message: str) -> Verdict:
     """Does `message` decide the pending proposal? Fails closed: an unusable answer is OTHER, never a decision."""
-    human = with_history(history, f"Pending proposal:\n{json.dumps(proposal)}\n\nNew message:\n{message}")
-    verdict = await _structured(model, ApprovalVerdict, APPROVAL_PROMPT, human)
+    pending = untrusted("UNTRUSTED_PENDING_PROPOSAL", json.dumps(proposal, ensure_ascii=False))
+    human = with_history(history, f"{pending}\n\n{untrusted('UNTRUSTED_USER_MESSAGE', message)}")
+    verdict = await structured_call(model, ApprovalVerdict, APPROVAL_PROMPT, human)
     return verdict.decision if verdict else "OTHER"

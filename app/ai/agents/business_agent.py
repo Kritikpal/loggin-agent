@@ -1,3 +1,4 @@
+# TODO: SECURITY — run llm-secure-patterns to apply LLM security patterns
 """One tool-calling agent that answers sales and inventory questions from tool data only."""
 
 import logging
@@ -9,9 +10,11 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.prebuilt.tool_node import ToolInvocationError
 
+from app.ai.guardrails import WITHHELD_TEXT, injection, trip
+from app.ai.prompts import load_prompt
 from app.ai.tools.customers import find_customers
 from app.ai.tools.inventory import get_inventory_status
-from app.ai.tools.sales import get_sales_summary, get_sales_trends
+from app.ai.tools.sales import compare_sales_periods, get_sales_summary, get_sales_trends
 from app.core.errors import AIUnavailableError
 from app.schemas.ai import ChatResponse, ToolCallRecord
 
@@ -20,38 +23,8 @@ logger = logging.getLogger(__name__)
 MAX_STEPS = 10  # graph steps (model and tool turns) per request; stops tool-call loops
 TOOL_FAILED = "The data could not be retrieved because of an internal error."
 
-SYSTEM_PROMPT = """
-You are a retail operations analyst.
+SYSTEM_PROMPT = load_prompt("business_agent_system")  # has {today} and {weekday} placeholders
 
-Today: {today} ({weekday}).
-Resolve relative dates and report exact date ranges.
-
-Rules:
-- Use tools for all sales, inventory and customer facts.
-- Never invent numbers.
-- Choose tools based on the user's question.
-- Call additional tools only when necessary.
-- Distinguish verified findings from possible causes.
-- Never treat correlation as causation.
-- Inventory represents current stock, not historical stock.
-- If data is missing, say so.
-- If a tool fails, retry only when the error is actionable.
-- Answer unrelated questions without calling tools.
-- Earlier messages in the conversation are context: use them to resolve references such as "that category",
-  "the same period" or "jeans only".
-- Call tools again for every number in your new answer. You may quote earlier numbers, never invent them.
-
-What you can offer:
-- Sales totals and trends, current stock, and customer lookups (no contact details, no purchase history).
-- One change: a promotional campaign for one product category. It is prepared for the user to approve and is
-  created only after they approve it. Never say you have created or changed anything yourself.
-- You cannot forecast demand, analyse pricing, restock, change prices or send messages. Do not offer them.
-
-Style:
-- Keep replies short. A greeting or "what can you do" gets two or three sentences that cover both the data you
-  can check and the campaign you can prepare for approval.
-- Plain text only: no tables, no HTML, no headings. Short "-" lists are fine.
-"""
 
 def utc_today() -> date:
     return datetime.now(UTC).date()
@@ -62,18 +35,23 @@ async def _tool_errors_to_model(request, handler):
     """Turn any tool crash into a ToolMessage so the run continues. Bad arguments are explained so the model
     can retry; anything else stays generic so internals never reach the model or the client."""
     try:
-        return await handler(request)
+        result = await handler(request)
     except Exception as exc:
         logger.exception("Tool %s failed", request.tool_call["name"])
         content = exc.message if isinstance(exc, ToolInvocationError) else TOOL_FAILED
         return ToolMessage(content=content, tool_call_id=request.tool_call["id"], status="error")
+    # database text (product or customer names) can carry injected instructions: the model never sees such a result
+    if isinstance(result, ToolMessage) and (check := injection(result.text)):
+        trip("tool_result", check, result.text, tool=request.tool_call["name"])
+        return ToolMessage(content=WITHHELD_TEXT, tool_call_id=request.tool_call["id"], status="success")
+    return result
 
 
 def build_agent(model: BaseChatModel, today: date, notes: str = ""):
     prompt = SYSTEM_PROMPT.format(today=today.isoformat(), weekday=today.strftime("%A"))
     return create_agent(
         model,
-        tools=[get_sales_trends, get_sales_summary, get_inventory_status, find_customers],
+        tools=[get_sales_trends, get_sales_summary, compare_sales_periods, get_inventory_status, find_customers],
         system_prompt=f"{prompt}\n{notes}" if notes else prompt,  # saved notes come after the rules
         middleware=[_tool_errors_to_model],
     )
@@ -106,7 +84,6 @@ async def chat(
     except Exception as exc:  # provider outage, rate limit, recursion limit, ...
         logger.exception("Agent run failed")
         raise AIUnavailableError("The AI assistant could not complete the request. Try again shortly.") from exc
-    logger.info(state)
     messages = state["messages"]
     final = messages[-1]
     answer = final.text.strip() if isinstance(final, AIMessage) else ""
