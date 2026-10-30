@@ -1,10 +1,4 @@
 from app.models.base import Base
-from app.models.campaign import Campaign
-from app.models.chat_message import ChatMessage
-from app.models.customer import Customer
-from app.models.inventory import Inventory
-from app.models.memory import Memory
-from app.models.product import Product
-from app.models.sale import Sale
+from app.models.log_event import LogEvent, SourceIndexState
 
-__all__ = ["Base", "Campaign", "ChatMessage", "Customer", "Inventory", "Memory", "Product", "Sale"]
+__all__ = ["Base", "LogEvent", "SourceIndexState"]

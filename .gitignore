@@ -6,3 +6,7 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+.cache/
+
+# Local log-source allowlist (copy sources.example.yaml to create it)
+sources.yaml

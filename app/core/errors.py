@@ -29,22 +29,6 @@ class NotFoundError(AppError):
     code = "not_found"
 
 
-class ConflictError(AppError):
-    status_code = 409
-    code = "conflict"
-
-
-class InsufficientStockError(ConflictError):
-    code = "insufficient_stock"
-
-
-class InvalidRequestError(AppError):
-    """Request is well-formed but violates a business rule (e.g. date_from after date_to)."""
-
-    status_code = 422
-    code = "invalid_request"
-
-
 class AIUnavailableError(AppError):
     """The AI model is not configured or its provider failed."""
 

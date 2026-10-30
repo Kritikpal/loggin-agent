@@ -1,0 +1,11 @@
+# Copy to sources.yaml (git-ignored) and list the log sources the indexer may read.
+# Only sources listed here can ever be read. Relative paths are relative to this file.
+sources:
+  - id: demo-app                       # lowercase letters, digits, . _ -
+    type: file
+    path: tests/fixtures/spring_boot.log
+    format: text                       # text (default) or json (one JSON object per line)
+    # event_start: '^\d{4}-\d\d-\d\dT' # regex for the first line of an event; default is a leading timestamp
+    timezone: UTC                      # used when a log timestamp has no zone
+    app_packages: [com.example]        # your own Java packages, so library frames are filtered out
+    # field_mappings: {message: msg, level: severity}   # canonical field -> key in your logs

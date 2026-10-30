@@ -1,207 +1,89 @@
-# AI Business Operator - Clothing Retail (Phase 1)
+# Local AI Log Monitor
 
-Phase 1 is the **business backend only**: PostgreSQL schema + FastAPI APIs + deterministic demo data.
-There are no agents yet; the layering is arranged so LangChain tools can call the service layer later.
+Local-first, read-only AI assistant that helps developers investigate application failures by searching local log
+files and citing the exact evidence. Only local log files are supported (Docker support was dropped). Plan: Notion
+"Local AI Log Monitor - MVP Plan".
 
-```
-api (FastAPI routers)  ->  services (business rules, transactions)  ->  repositories (SQL)  ->  models
-```
+**Current state:** indexing and `search_logs` are real; the AI chat endpoints are mocks.
 
-`app/services/*` depend only on an `AsyncSession`, so a future LangChain tool can do
-`async with SessionLocal() as s: await SaleService(s).summary(filters)` with no HTTP in between.
-`app/ai/` holds the assistant: `tools/` (read-only tools), `agents/` (the tool-calling agent),
-`actions/` (action planning, validation and execution) and `graphs/` (the LangGraph workflow and its PostgreSQL
-checkpointer).
+| Endpoint (under `/api/v1`) | Behaviour |
+| --- | --- |
+| `GET /health` | `{"status": "ok"}` |
+| `GET /sources` | configured sources with their index coverage |
+| `POST /tools/search-logs` | hybrid log search (see below) |
+| `POST /ai/chat` | mock reply |
+| `GET /ai/memories` | mock list |
+| `POST /ai/workflows/{thread_id}/resume` | mock reply |
 
-The agent's read-only tools: `get_sales_trends` (daily revenue/units), `get_sales_summary` (totals and per-category
-breakdown), `get_inventory_status` (current stock) and `find_customers` (name/email search, marketing consent). Customer
-email and phone are never sent to the model, and customers are not linked to sales.
+Layout: `app/controllers` (routes), `app/tools` (search tool), `app/schemas`, `app/core` (settings, database,
+errors, `llm.py` = LangChain/Groq model with API-key rotation), `app/ingestion` (indexer). Migrations in `alembic/`.
 
-### AI chat and human approval
+Run: `.venv/Scripts/python -m uvicorn app.main:app --reload`; test: `.venv/Scripts/python -m pytest`.
 
-`POST /api/v1/ai/chat` answers questions as before. A request to change something (Phase 2: only `CREATE_CAMPAIGN`) is
-planned, validated (discount 0-50%, existing product category, required fields) and paused for approval:
-`status: WAITING_APPROVAL` with the `proposed_action` and a `thread_id`. Then
-`POST /api/v1/ai/workflows/{thread_id}/resume` with `{"decision": "APPROVED" | "REJECTED"}` gives
-`EXECUTED` or `REJECTED`. On approval the campaign is created with `status = "approved"`, its `category` set, and
-`id` equal to the `thread_id`, and is returned in `campaign`. Nothing is sent to customers and no prices change. If the
-creation fails, the workflow stays waiting and can be approved again without creating a duplicate.
+## Indexing logs
 
-### Conversations
+1. Copy `sources.example.yaml` to `sources.yaml` and list the log files the indexer may read (nothing else is ever
+   read; `type: file` is the only source type).
+2. Index:
 
-Every chat response includes a `conversation_id`. Send it back with the next message to continue the conversation;
-omit it to start a new one (an unknown id is a 404). The last 10 messages are given to the agent, router and planner,
-so follow-ups like "and for jeans only?" or "run 15% on that category" work. Turns are stored in `chat_messages`
-(text only, no tool output) and only when they succeed.
+   ```
+   .venv/Scripts/python -m scripts.index_logs --source demo-app      # one source
+   .venv/Scripts/python -m scripts.index_logs --all --reembed        # all, then embed rows that have no vector yet
+   .venv/Scripts/python -m scripts.index_logs --all --interval 60    # poll every 60 s until Ctrl-C
+   ```
 
-While a proposal is waiting, a clear yes or no in the same conversation approves or rejects it; the AI decides
-whether the message is a decision, and anything unclear ("make it 10%") is answered as a normal message, leaving the
-proposal pending. "Yes" always means the newest proposal. The resume endpoint still works and records its outcome in
-the conversation.
+   Options: `--max-events N` (per batch, default 1000), `--settle SECONDS` (how long a file must be quiet before its
+   newest event counts as finished, default 5), `--config PATH`. Exit code 1 if a source ended in error.
 
-### Long-term memory
+Each run resumes where the last one stopped (the cursor in `source_index_state`), so re-running stores nothing twice;
+a rotated or replaced file is read again from its start and old rows are kept as history. Per event, `log_events`
+holds the redacted event text, its time, level and parsed fields, a locator (path, byte offsets, line numbers, sha256)
+pointing at the original, the text used for search, and a local 384-dim embedding (fastembed `bge-small`, cached in
+`.cache/fastembed`, override with `EMBEDDING_CACHE_DIR`). If embedding fails the event is still stored; `--reembed`
+fills it later.
 
-The assistant remembers what the manager tells it across conversations. Two kinds of memory are kept in the
-`memories` table:
-- **preferences**, how the manager wants things done, found by key (`report_week`: "Monday to Sunday",
-  `default_discount`: "15%");
-- **observations**, lasting facts about the business that the database does not hold ("Jeans slow down in monsoon,
-  June to September").
+**Safety:** log files are only ever opened for reading. Secrets and personal data (passwords, tokens, auth headers,
+keys, emails, card numbers) are redacted before anything is parsed, stored or embedded, and no LLM is involved in
+indexing. Errors are recorded by exception class name only, never with log content.
 
-Only what the manager *said* is stored. Sales, stock and customer data are never copied into memory: the assistant is
-told to fetch every number with its tools.
+## Searching logs
 
-**Saving.** After a chat reply has been sent, a background task makes one extra Groq call (strict `json_schema`) that
-proposes memories from the latest message. Nothing is extracted from approval decisions or messages under 15
-characters. Every proposal then passes six checks in order; the first failure drops it and logs why:
+`POST /api/v1/tools/search-logs` (read-only; no LLM):
 
-| Check | Drops |
-|---|---|
-| `schema` | malformed output, an invented or wrong-kind `updates_id` |
-| `not_said` | evidence that is not in the manager's latest message, numbers that appear only in tool results |
-| `business_data` | restated sales, stock or price figures |
-| `pii` | emails and phone numbers |
-| `duplicate` | the same text, the same preference value, or a near copy (trigram similarity >= 0.8) |
-| `safety_rule` | preferences that touch approvals ("approve automatically", "without asking") |
-
-What survives is written in one transaction as an `INSERT`, an `UPDATE` (the old row becomes `superseded`; rows are
-never edited) or a `FLAG`. A changed preference always replaces the old one, since the latest statement wins. A contradicted observation is
-saved as `conflicted` and the old one stays active until you settle it. A number the assistant suggested and the
-manager agreed to is stored with `origin: endorsed`. A failure anywhere in this path is logged and never changes the
-chat reply. A Groq rate limit (429) is retried up to 3 times, 20 seconds apart.
-
-**Using.** Before the agent runs, every active preference and up to 5 observations matching the last two messages are
-added to the agent's system prompt and the planner's input as "saved notes". The planner may use a saved preference
-(for example a default discount) to fill a proposal; it is still validated and needs human approval, which memory
-cannot change. The router and the approval check do not see the notes.
-
-**Correcting.** Memories are visible and reversible:
-
-| Endpoint | Behaviour |
-|---|---|
-| `GET /api/v1/ai/memories?kind=&status=` | newest first, up to 100; without `status`: `active` and `conflicted` |
-| `DELETE /api/v1/ai/memories/{id}` | soft delete (204). On a `conflicted` memory this rejects it |
-| `POST /api/v1/ai/memories/{id}/accept` | a `conflicted` memory becomes active and the one it contradicted is superseded; 409 for any other status |
-
-Logs show what happened: `memory decision=INSERT|UPDATE|FLAG|SKIP ...` for each proposal and `memory recall ...` for
-the notes each turn was given. Memory needs `GROQ_API_KEY` like the rest of `/ai`, the `pg_trgm` extension (the
-migration creates it) and no other new service; semantic (vector) search is not used.
-
-Workflow state lives in PostgreSQL (LangGraph checkpoint tables, created on startup in the app database, not by
-Alembic), so a waiting workflow survives a server restart. On Windows, psycopg's async mode needs the selector event
-loop, hence `--loop asyncio:SelectorEventLoop` in the run command above; without it startup logs a clear error and the
-`/ai` endpoints answer 503 while the rest of the API keeps working.
-
-## Local setup (Windows / PowerShell)
-
-PostgreSQL must already be running on `localhost:5432`. Nothing here installs or starts a server.
-
-```powershell
-# 1. virtual environment
-python -m venv .venv
-
-# 2. dependencies (app + test tools)
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-
-# 3. configuration - copy the template, then edit DATABASE_URL if your credentials differ
-Copy-Item .env.example .env
-#    DATABASE_URL=postgresql+asyncpg://postgres:root@localhost:5432/ai_business_operator
-
-# 4. verify the PostgreSQL connection
-.\.venv\Scripts\python.exe -m scripts.check_connection
-
-# 5. create the application database if it is missing (never drops or alters an existing one)
-.\.venv\Scripts\python.exe -m scripts.create_database
-
-# 6. create the tables with Alembic (the app never creates tables at startup)
-.\.venv\Scripts\python.exe -m alembic upgrade head
-
-# 7. load demo data (idempotent - safe to repeat)
-.\.venv\Scripts\python.exe -m scripts.seed_data
-
-# 8. start the API
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000 --loop asyncio:SelectorEventLoop
-
-# 9. open Swagger UI:  http://localhost:8000/docs      (ReDoc: /redoc)
-
-# 10. run the tests (separate database - see below)
-.\.venv\Scripts\python.exe -m pytest
-.\.venv\Scripts\python.exe -m pytest --cov=app --cov-report=term-missing   # with coverage
+```json
+{"query": "why did startup fail", "source_ids": ["demo-app"], "levels": ["ERROR", "WARN"],
+ "start_time": "2026-03-10T00:00:00Z", "end_time": null, "top_k": 10}
 ```
 
-(`.venv\Scripts\Activate.ps1` also works if you prefer an activated shell; if PowerShell blocks it, run
-`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or just use the full paths above.)
+Only `query` is required (1-2000 chars); `top_k` is 1-50 (default 10); `source_ids` omitted = every configured
+source; an id not in `sources.yaml` is a `404`, a malformed body a `422`. The response:
 
-## Endpoints (`/api/v1`)
-
-| Area | Endpoint | Notes |
-|---|---|---|
-| Products | `GET /products` | filters: `category`, `size`, `color` (exact, case-insensitive), `search` (name/SKU substring); paginated |
-| | `GET /products/{id}`, `POST /products`, `PATCH /products/{id}` | `POST` also creates the inventory row (`initial_quantity`, `reorder_level`); SKU is immutable |
-| Inventory | `GET /inventory` | same filters as products; paginated |
-| | `GET /inventory/low-stock` | `quantity <= reorder_level`, largest shortfall first |
-| | `GET /inventory/{product_id}`, `PATCH /inventory/{product_id}` | set `quantity` and/or `reorder_level` |
-| Sales | `GET /sales` | filters: `date_from`, `date_to` (inclusive UTC days), `category`, `product_id`; newest first |
-| | `POST /sales` | `{product_id, quantity}`; price comes from the product; stock is decremented in the same transaction |
-| | `GET /sales/summary` | revenue, units, sale count, average sale value, per-category breakdown |
-| | `GET /sales/trends` | `granularity=day\|week\|month`; bucketed in PostgreSQL, empty periods returned as zeros |
-| Customers | `GET /customers`, `POST /customers` | filters: `marketing_consent`, `search` |
-| Campaigns | `GET /campaigns`, `GET /campaigns/{id}`, `POST /campaigns` | creation always stores `status = "draft"` (optional `category`); nothing is sent |
-| AI memory | `GET /ai/memories`, `DELETE /ai/memories/{id}`, `POST /ai/memories/{id}/accept` | see "Long-term memory" above |
-
-Conventions
-- Lists return `{items, total, page, page_size}` (`page` >= 1, `page_size` 1-200, default 50).
-- Errors always look like `{"error": {"code", "message", "details"}}`: `validation_error` / `invalid_request` (422),
-  `not_found` (404), `conflict` and `insufficient_stock` (409), `internal_error` (500, no internals leaked).
-- Money is `Decimal` end to end (`NUMERIC(12,2)`), serialized as exact strings such as `"89.00"`. Timestamps are UTC.
-
-### How overselling is prevented
-`POST /sales` runs in one transaction: it `SELECT ... FOR UPDATE`s the product's inventory row, checks stock, decrements,
-inserts the sale, then commits. Concurrent sales of the same product queue on that row lock, so stock can never go
-negative (a `CHECK (quantity >= 0)` is the last line of defence). Any failure rolls back the decrement and the sale together.
-
-## Demo data
-
-`python -m scripts.seed_data` inserts 150 SKUs (+ inventory), ~2,000 sales over the 90 days before `--as-of`
-(default: today, UTC), 100 fictional customers (`@example.com`, phones in the reserved fictional 555-01xx range) and
-5 draft campaigns. IDs are derived deterministically and inserts use `ON CONFLICT DO NOTHING`, so re-running adds nothing.
-The sales history is dated relative to `--as-of`; to refresh it for a new day run
-`python -m scripts.seed_data --reset-demo` (removes only the demo products, their sales/inventory, and the demo
-customers/campaigns - rows you created yourself are left alone, unless you sold demo products, whose sales are removed).
-
-Planted scenarios for later AI agents to find:
-1. **Jeans sales fall** over the latest 14 days (about -58% units vs the 14 days before).
-2. **Popular jeans sizes (32, 34) run out**: 8 SKUs at 0 and 4 nearly gone - the 12 items `GET /inventory/low-stock` returns.
-3. **Linen Summer Shirt is overstocked** (320-520 units vs a reorder level of 15) and slow-moving.
-4. **T-shirt sales stay flat.**
-5. **Overall revenue declines** over the latest two weeks, driven by jeans.
-
-Inventory quantities are scenario "current state" values; they are not derived by replaying the sales history.
-
-## Database and migrations
-- Tables: `products`, `inventory`, `sales`, `customers`, `campaigns`, `chat_messages`, `memories` (UUID primary keys, `TIMESTAMPTZ`, CHECK constraints
-  for prices/quantities/discount range/campaign status, FKs, and indexes for the filters and date queries).
-- Migrations live in `alembic/versions`. After changing a model: `python -m alembic revision --autogenerate -m "message"`
-  then `python -m alembic upgrade head`.
-
-## Tests
-`pytest` creates and migrates `ai_business_operator_test` (or `TEST_DATABASE_URL`) on its own, truncates it between tests,
-and **refuses to run against any database whose name does not end in `_test`** - the application database is never touched.
-Covered: CRUD, validation, stock rules, 25-way concurrent sales, rollback on mid-transaction failure, revenue maths,
-date-bucketed trends, low-stock queries, seed idempotency and the planted scenarios.
-
-## Layout
+```json
+{"results": [{"event_id": "...", "source_id": "demo-app", "occurred_at": "...", "level": "ERROR",
+              "locator": {"type": "file", "path": "...", "line_start": 158, "line_end": 158,
+                          "offset_start": 0, "offset_end": 0, "sha256": "..."},
+              "raw_text": "...", "score": 0.032, "matched_by": ["semantic", "keyword"]}],
+ "coverage": [{"source_id": "demo-app", "status": "complete", "indexed_through": "...", "last_error": null}]}
 ```
-app/
-  main.py            FastAPI app factory
-  core/              config (.env), async engine/session, error envelope
-  models/            SQLAlchemy 2.0 models
-  schemas/           Pydantic v2 request/response models
-  repositories/      SQL queries (parameterized; aggregation in PostgreSQL)
-  services/          business logic + transactions (reusable by LangChain tools)
-  api/v1/            routers
-  ai/                placeholders for future agents / tools / graphs
-alembic/             migrations
-scripts/             check_connection, create_database, seed_data
-tests/
-```
+
+`locator` leads back to the exact bytes of the original file (byte offsets, lines, sha256); `raw_text` is the redacted
+event text, returned as data only.
+
+**Ranking.** Two legs each fetch their best 50 candidates, with all filters (sources, levels, time window) applied
+inside their SQL, so filters work before `top_k`, never after:
+- *semantic*: cosine distance between the question's embedding and each event's (HNSW index with pgvector's
+  iterative scan, so a filtered search still fills its page; events without a vector are skipped);
+- *keyword*: full-text match on the event's search text, OR-style: any lexeme of the question matches, stop words are
+  dropped, identifiers are kept whole and split (`jwtAuthFilter` -> `jwtauthfilter`, `jwt`, `auth`, `filter`).
+
+Reciprocal rank fusion merges them: `score = sum over legs of 1 / (60 + rank)`; ties go to the newest event.
+`matched_by` names the legs that found a hit. There is no similarity cutoff: a question always gets the nearest
+events, so read `score`/`matched_by`, not mere presence. If embedding the question fails, the search runs keyword-only.
+
+**Coverage** is always reported for every searched source, so "no results" is never mistaken for "no logs":
+`not_indexed` (never indexed), `error` (the last run recorded an error, see `last_error`), `stale` (the file changed
+after the last run: re-index), `partial` (unchanged file whose newest part is not indexed yet, e.g. an event held back
+while still being written), `complete`.
+
+`GET /api/v1/sources` lists every configured source as `{"id", "type", "format", "status", "indexed_through",
+"last_error"}` with the same coverage status (`[]` when none are configured).
