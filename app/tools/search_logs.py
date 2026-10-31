@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.embeddings import EMBEDDING_DIMENSIONS, embed_query
 from app.ingestion.coverage import coverage_for_all
 from app.ingestion.sources import Source, get_source
-from app.schemas.search_logs import SearchHit, SearchLogsRequest, SearchLogsResponse
+from app.schemas.search_logs import LogFilters, SearchHit, SearchLogsRequest, SearchLogsResponse
 from app.tools.keyword_query import keyword_lexemes, tsquery_text
 from app.tools.search_queries import Candidate, fetch_events, filters, keyword_candidates, semantic_candidates
 
@@ -46,7 +46,7 @@ class Fused:
 async def search_logs(
     request: SearchLogsRequest, session: AsyncSession, *, sources: tuple[Source, ...], embed: Embedder = embed_query,
 ) -> SearchLogsResponse:
-    searched = _searched_sources(request, sources)
+    searched = searched_sources(request, sources)
     where = filters(request, [source.id for source in searched])
     pool = max(request.top_k, MIN_CANDIDATES)
     legs: dict[str, list[Candidate]] = {}
@@ -62,7 +62,7 @@ async def search_logs(
     return SearchLogsResponse(results=results, coverage=await coverage_for_all(session, searched))
 
 
-def _searched_sources(request: SearchLogsRequest, sources: tuple[Source, ...]) -> tuple[Source, ...]:
+def searched_sources(request: LogFilters, sources: tuple[Source, ...]) -> tuple[Source, ...]:
     """The allowlisted sources to search, in request order. Any id not on the allowlist refuses the whole request."""
     if request.source_ids is None:
         return sources

@@ -5,17 +5,15 @@ from typing import Any, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-class SearchLogsRequest(BaseModel):
-    """Step 2 contract of the search_logs tool."""
+class LogFilters(BaseModel):
+    """The filters search_logs and summarize_logs share, so both tools always agree on what is in scope."""
 
     model_config = ConfigDict(extra="forbid")
 
-    query: str = Field(min_length=1, max_length=2000, description="Natural-language search query")
     source_ids: list[str] | None = Field(default=None, description="Restrict to these approved log sources")
-    start_time: datetime | None = None
-    end_time: datetime | None = None
+    start_time: datetime | None = Field(default=None, description="Earliest event time, ISO 8601 in UTC, e.g. 2026-03-10T10:14:00Z")
+    end_time: datetime | None = Field(default=None, description="Latest event time, ISO 8601 in UTC, e.g. 2026-03-10T10:15:00Z")
     levels: list[str] | None = Field(default=None, description="ERROR, WARN, INFO, ...")
-    top_k: int = Field(default=10, ge=1, le=50, description="Maximum number of results")
 
     @field_validator("levels")
     @classmethod
@@ -27,6 +25,23 @@ class SearchLogsRequest(BaseModel):
         if self.start_time and self.end_time and self.start_time > self.end_time:
             raise ValueError("start_time must not be after end_time")
         return self
+
+
+class SearchLogsRequest(LogFilters):
+    """Step 2 contract of the search_logs tool."""
+
+    query: str = Field(min_length=1, max_length=2000, description="Natural-language search query")
+    top_k: int = Field(default=10, ge=1, le=50, description="Maximum number of results")
+
+
+class LevelCount(BaseModel):
+    """How many events one source has at one level, and when the first and last of them happened."""
+
+    source_id: str
+    level: str | None
+    count: int
+    first_at: datetime | None
+    last_at: datetime | None
 
 
 class SearchHit(BaseModel):

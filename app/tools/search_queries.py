@@ -18,7 +18,7 @@ from sqlalchemy import ColumnElement, Row, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.log_event import LogEvent
-from app.schemas.search_logs import SearchLogsRequest
+from app.schemas.search_logs import LogFilters
 
 HNSW_EF_SEARCH = 100  # >= the candidate pool, so one graph pass can fill it
 HNSW_ITERATIVE_SCAN = "relaxed_order"
@@ -34,7 +34,7 @@ class Candidate:
     strength: float
 
 
-def filters(request: SearchLogsRequest, source_ids: Sequence[str]) -> list[ColumnElement[bool]]:
+def filters(request: LogFilters, source_ids: Sequence[str]) -> list[ColumnElement[bool]]:
     conditions = [LogEvent.source_id.in_(list(source_ids))]
     if request.levels:
         conditions.append(LogEvent.level.in_(request.levels))
@@ -84,3 +84,19 @@ async def fetch_events(session: AsyncSession, ids: Sequence[uuid.UUID]) -> dict[
         LogEvent.id, LogEvent.source_id, LogEvent.occurred_at, LogEvent.level, LogEvent.locator, LogEvent.raw_text,
     ).where(LogEvent.id.in_(list(ids)))
     return {row.id: row for row in (await session.execute(stmt)).all()}
+
+
+async def level_counts(session: AsyncSession, where: list[ColumnElement[bool]], limit: int) -> list[Row]:
+    """Events per source and level, with the first and last event time. Served by the source/time and level/time
+    indexes; `limit` bounds the reply when a source's levels are messy (each odd level spelling is its own group)."""
+    stmt = (
+        select(
+            LogEvent.source_id, LogEvent.level, func.count().label("count"),
+            func.min(LogEvent.occurred_at).label("first_at"), func.max(LogEvent.occurred_at).label("last_at"),
+        )
+        .where(*where)
+        .group_by(LogEvent.source_id, LogEvent.level)
+        .order_by(LogEvent.source_id, desc("count"), LogEvent.level)
+        .limit(limit)
+    )
+    return list((await session.execute(stmt)).all())

@@ -1,13 +1,16 @@
 import uuid
 from datetime import UTC, datetime
+from typing import Annotated
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.agent.graph import Agent, ask
+from app.controllers.dependencies import get_agent
 from app.schemas.chat import ChatRequest, ChatResponse, Memory, ResumeRequest
 
 router = APIRouter(prefix="/ai", tags=["AI"])
 
-# Mock data until the LangGraph agent and the memory store exist.
+# Mock data until the memory store and the approval workflow exist.
 MOCK_MEMORIES = [
     Memory(id=uuid.UUID(int=1), kind="preference", content="Show the most recent errors first.",
            created_at=datetime(2026, 10, 29, tzinfo=UTC)),
@@ -16,12 +19,13 @@ MOCK_MEMORIES = [
 ]
 
 
-@router.post("/chat", response_model=ChatResponse, summary="Ask about the logs (mock reply)")
-async def ai_chat(data: ChatRequest) -> ChatResponse:
+@router.post("/chat", response_model=ChatResponse, summary="Ask the log investigation agent")
+async def ai_chat(data: ChatRequest, agent: Annotated[Agent, Depends(get_agent)]) -> ChatResponse:
+    # ponytail: every question starts fresh; conversation_id is echoed, not remembered. Add a checkpointer when
+    # follow-up questions are needed.
+    reply = await ask(agent, data.message)
     return ChatResponse(
-        response="Mock reply: the log investigation agent is not connected yet.",
-        conversation_id=data.conversation_id or uuid.uuid4(),
-    )
+        response=reply.answer, tool_calls=reply.tool_calls, conversation_id=data.conversation_id or uuid.uuid4())
 
 
 @router.get("/memories", response_model=list[Memory], summary="List memories (mock data)")

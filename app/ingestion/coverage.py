@@ -14,12 +14,12 @@ import os
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ingestion.readers.base import Cursor
 from app.ingestion.sources import Source
-from app.models.log_event import SourceIndexState
+from app.models.log_event import LogEvent, SourceIndexState
 from app.schemas.search_logs import SourceCoverage
 
 
@@ -35,6 +35,16 @@ async def coverage_for_all(session: AsyncSession, sources: Sequence[Source]) -> 
     # stat() blocks on the disk (or a network share), so the whole batch runs in one worker thread.
     files = await asyncio.to_thread(lambda: [_stat(source) for source in sources])
     return [_status(source, states.get(source.id), file) for source, file in zip(sources, files)]
+
+
+async def time_spans(session: AsyncSession, sources: Sequence[Source]) -> dict[str, tuple[datetime, datetime]]:
+    """First and last event time per source. A source with no timestamped events is left out."""
+    first, last = func.min(LogEvent.occurred_at), func.max(LogEvent.occurred_at)
+    rows = await session.execute(
+        select(LogEvent.source_id, first, last)
+        .where(LogEvent.source_id.in_([source.id for source in sources]), LogEvent.occurred_at.is_not(None))
+        .group_by(LogEvent.source_id))
+    return {source_id: (start, end) for source_id, start, end in rows}
 
 
 def _stat(source: Source) -> os.stat_result | None:

@@ -30,7 +30,15 @@ SPRING_BOOT = re.compile(
 )
 # <ts> [<thread>] <LEVEL> <logger> - <message>
 LOGBACK_DEFAULT = re.compile(rf"{_TS}[ \t]+{_THREAD}[ \t]+{_LEVEL}[ \t]+{_LOGGER}[ \t]+-{_MESSAGE}")
-LAYOUTS = (("spring_boot", SPRING_BOOT), ("logback_default", LOGBACK_DEFAULT))  # tried in order; the first match wins
+# TID: [<tenant>] [<app>] [<ts>] [<correlation id>] <LEVEL> {<logger>} - <message>  (WSO2 Carbon, log4j2). The groups are
+# often empty, the level is space-padded, and some lines (shutdown messages) have no correlation group at all.
+WSO2_CARBON = re.compile(
+    rf"TID:[ \t]+\[(?P<tenant>[^\]\n]{{0,128}})\][ \t]+\[(?P<app>[^\]\n]{{0,128}})\][ \t]+\[{_TS}\]"
+    rf"(?:[ \t]+\[(?P<correlation>[^\]\n]{{0,128}})\])?[ \t]+{_LEVEL}[ \t]+\{{(?P<logger>[^}}\n]{{1,512}})\}}[ \t]+-{_MESSAGE}"
+)
+LAYOUTS = (  # tried in order; the first match wins
+    ("spring_boot", SPRING_BOOT), ("logback_default", LOGBACK_DEFAULT), ("wso2_carbon", WSO2_CARBON),
+)
 LAYOUT_FIELDS = frozenset({"occurred_at", "level", "logger", "message"})
 
 # A Java frame line: "\tat pkg.Class.method(" - a dotted name directly followed by "(", so prose "at least" is no frame.
@@ -86,6 +94,8 @@ def _parse_layout(line: str, tz_name: str) -> _Layout | None:
             "level": (LEVELS[match["level"]], provenance),
             "logger": (match["logger"], provenance),
         }
+        if correlation := sanitize(match.groupdict().get("correlation") or "").strip():
+            found["request_id"] = (correlation, provenance)  # WSO2's correlation id ties one request's lines together
         return _Layout(name, found, match["message"] or "", _layout_fields(match))
     return None
 
@@ -95,8 +105,9 @@ def _layout_fields(match: re.Match[str]) -> dict[str, object]:
     fields: dict[str, object] = {}
     if groups.get("pid"):
         fields["pid"] = int(groups["pid"])
-    if thread := sanitize(groups["thread"]).strip():  # "[   main]" is padded
-        fields["thread"] = thread
+    for key in ("thread", "tenant", "app"):  # "[   main]" is padded; empty groups add nothing
+        if value := sanitize(groups.get(key) or "").strip():
+            fields[key] = value
     return fields
 
 

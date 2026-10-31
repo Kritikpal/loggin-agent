@@ -37,12 +37,6 @@ async def test_search_logs_rejects_invalid_requests(client, body):
     assert (await client.post("/api/v1/tools/search-logs", json=body)).status_code == 422
 
 
-async def test_chat_returns_mock_and_keeps_conversation_id(client):
-    cid = str(uuid.uuid4())
-    res = await client.post("/api/v1/ai/chat", json={"message": "why 500?", "conversation_id": cid})
-    assert res.status_code == 200 and res.json()["conversation_id"] == cid
-
-
 async def test_memories_and_resume_are_mocks(client):
     assert len((await client.get("/api/v1/ai/memories")).json()) == 2
     res = await client.post(f"/api/v1/ai/workflows/{uuid.uuid4()}/resume", json={"decision": "REJECTED"})
