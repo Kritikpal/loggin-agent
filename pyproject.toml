@@ -48,3 +48,9 @@ addopts = "-m 'not slow'"
 [tool.coverage.run]
 source = ["app"]
 concurrency = ["greenlet", "thread"]  # SQLAlchemy's async layer runs on greenlets; without this lines go unreported
+
+[dependency-groups]
+dev = [
+    "agentevals>=0.0.9",
+    "langsmith>=0.14.16",
+]
