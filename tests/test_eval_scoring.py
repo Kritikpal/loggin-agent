@@ -52,6 +52,15 @@ def test_facts_are_case_insensitive_and_any_spelling_counts():
     assert not score({"tools": [], "answer_has": [["19"]]}, "18 warnings", [])["passed"]
 
 
+def test_a_number_fact_must_be_a_whole_number_not_part_of_a_line_or_time():
+    case = {"tools": [], "answer_has": [["18", "eighteen"]]}
+
+    assert score(case, "There are 18 errors.", [])["passed"]
+    assert score(case, "eighteen errors", [])["passed"]
+    assert not score(case, "5 entries, see lines 1820-1917", [])["passed"]
+    assert not score(case, "at 10:18:04", [])["passed"]
+
+
 def test_unicode_hyphens_and_spaces_match_their_plain_forms():
     case = {"tools": [], "answer_has": [["dev-auth-service"], ["15:44 IST"]]}
 

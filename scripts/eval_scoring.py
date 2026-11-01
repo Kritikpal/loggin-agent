@@ -29,7 +29,7 @@ def score(case: Mapping, answer: str, tool_calls: Sequence[Mapping]) -> dict[str
     tried = Counter(names)
     checks["budget"] = all(tried[name] <= limit for name, limit in BUDGETS.items())
     if case.get("answer_has"):
-        checks["answer_has"] = all(any(s.casefold() in text for s in fact) for fact in case["answer_has"])
+        checks["answer_has"] = all(any(_contains(s, answer, text) for s in fact) for fact in case["answer_has"])
     if case.get("answer_lacks"):
         checks["answer_lacks"] = not any(s.casefold() in text for s in case["answer_lacks"])
     if case.get("cites"):
@@ -43,6 +43,13 @@ def _in_order(required: Sequence[str], names: Sequence[str]) -> bool:
         return False
     firsts = [names.index(name) for name in required]
     return firsts == sorted(firsts)
+
+
+def _contains(expected: str, answer: str, folded: str) -> bool:
+    """A bare number must stand alone ("18 errors", not "line 1820" or "10:18:04"); other text is a substring."""
+    if str(expected).isdigit():
+        return _cited(int(expected), answer)
+    return str(expected).casefold() in folded
 
 
 def _cited(line: int, answer: str) -> bool:

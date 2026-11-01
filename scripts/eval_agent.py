@@ -1,6 +1,7 @@
 """Run the agent golden set (tests/fixtures/agent-golden.yaml) against the real model and the indexed database.
 
     uv run python -m scripts.eval_agent                     all cases; results to docs/agent-eval-golden-<time>.json
+    uv run python -m scripts.eval_agent --smoke             the smoke set: 2 cases per class, after a prompt change
     uv run python -m scripts.eval_agent --only s1-dev-auth-error-count,q2-identifier-hibernate-code
     uv run python -m scripts.eval_agent --class no_tool
     uv run python -m scripts.eval_agent --langsmith         also record an experiment in LangSmith
@@ -69,9 +70,12 @@ async def run_case(case: dict, base: tuple[Source, ...], workdir: Path) -> dict:
         try:
             reply = await ask(agent, case["question"])
             break
-        except AIUnavailableError:
-            if attempt == ATTEMPTS:
-                return {"answer": "", "tool_calls": [], "error": "AI unavailable", "attempts": attempt}
+        except AIUnavailableError as exc:
+            # 413: one request is bigger than the per-minute token limit, so waiting and retrying cannot help
+            too_large = getattr(exc.__cause__, "status_code", None) == 413
+            if too_large or attempt == ATTEMPTS:
+                error = "request too large for the token limit" if too_large else "AI unavailable"
+                return {"answer": "", "tool_calls": [], "error": error, "attempts": attempt}
             await asyncio.sleep(RETRY_WAIT)
     calls = [
         {"name": c.name, "args": c.args, "status": c.status, "result": (c.result or "")[:MAX_RESULT_CHARS]}
@@ -141,9 +145,10 @@ def report(results: Sequence[dict]) -> None:
         print("failed checks: " + ", ".join(f"{name} x{n}" for name, n in failures.most_common()))
 
 
-def select(cases: list[dict], only: str | None, cls: str | None) -> list[dict]:
+def select(cases: list[dict], only: str | None, cls: str | None, smoke: bool = False) -> list[dict]:
     ids = set(only.split(",")) if only else None
-    chosen = [c for c in cases if (ids is None or c["id"] in ids) and (cls is None or c["class"] == cls)]
+    chosen = [c for c in cases if (ids is None or c["id"] in ids) and (cls is None or c["class"] == cls)
+              and (not smoke or c.get("smoke"))]
     unknown = ids - {c["id"] for c in cases} if ids else set()
     if unknown:
         raise SystemExit(f"unknown case ids: {', '.join(sorted(unknown))}")
@@ -154,13 +159,14 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--only", help="comma-separated case ids")
     parser.add_argument("--class", dest="cls", help="run one class only")
+    parser.add_argument("--smoke", action="store_true", help="only the smoke set (2 cases per class)")
     parser.add_argument("--pause", type=float, default=PAUSE, help="seconds between cases")
     parser.add_argument("--langsmith", action="store_true", help="record an experiment in LangSmith")
     parser.add_argument("--out", type=Path, help="results file (default docs/agent-eval-golden-<time>.json)")
     args = parser.parse_args()
 
     golden = yaml.safe_load(GOLDEN.read_text(encoding="utf-8"))
-    cases = select(golden["cases"], args.only, args.cls)
+    cases = select(golden["cases"], args.only, args.cls, args.smoke)
     with tempfile.TemporaryDirectory() as tmp:
         if args.langsmith:
             results = await run_langsmith(cases, golden["cases"], golden["version"], args.pause, Path(tmp))
