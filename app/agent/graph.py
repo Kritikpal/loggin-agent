@@ -5,6 +5,7 @@ Each tool's budget (3 searches, 2 summaries) is enforced here, in code: a call p
 told so and must answer with what it has. The prompt asks for the same limits, but only this makes them certain.
 """
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -61,7 +62,34 @@ async def ask(agent: Agent, question: str) -> AgentReply:
         raise AIUnavailableError("The AI assistant could not complete the request. Try again shortly.") from exc
     messages = result["messages"]
     tool_calls = _tool_calls(messages)
-    return AgentReply(answer=messages[-1].text + _refused_note(tool_calls), tool_calls=tool_calls)
+    answer = messages[-1].text + _refused_note(tool_calls) + _coverage_note(tool_calls)
+    return AgentReply(answer=answer, tool_calls=tool_calls)
+
+
+# coverage status -> what it means for the answer; "complete" needs no note
+COVERAGE_NOTES = {
+    "stale": "the index is stale, newer log lines may be missing",
+    "partial": "the newest log lines are not indexed yet",
+    "not_indexed": "not indexed, so the answer is unknown, not \"none\"",
+    "error": "indexing failed, so results may be incomplete",
+}
+
+
+def _coverage_note(tool_calls: list[ToolCall]) -> str:
+    """Said by the code, not the model: the model was told about incomplete coverage and still left it out (eval c3)."""
+    statuses: dict[str, str] = {}
+    for call in tool_calls:
+        try:
+            coverage = json.loads(call.result or "{}").get("coverage", [])
+        except (ValueError, AttributeError):
+            continue
+        for item in coverage:
+            if item.get("status") in COVERAGE_NOTES:
+                statuses.setdefault(item["source_id"], item["status"])
+    if not statuses:
+        return ""
+    parts = "; ".join(f"{source}: {COVERAGE_NOTES[status]}" for source, status in statuses.items())
+    return f"\n\n_Note on coverage: {parts}._"
 
 
 def _refused_note(tool_calls: list[ToolCall]) -> str:

@@ -31,8 +31,12 @@ summarize_logs counts events per source and level, with first and last times, an
 {summary_budget} per question; they do not count against the searches. Call it first for counting questions ("how \
 many errors?"), "when did X start or stop?", and open questions ("is anything wrong?", "what happened in X?"), then \
 search where the counts point. Skip it when the question names an identifier, an error message or an exact event: \
-go straight to search. Counts answer "how many"; only search results show what happened, so cite events, not counts, \
-for a cause.
+go straight to search. It is not for "why" questions ("why did the application fail to start?"): search those across \
+all sources. A source that merely appears in the summary is not the one the question is about. Counts answer "how \
+many"; only search results show what happened, so cite events, not counts, for a cause.
+Never count search hits to answer "how many": a search shows at most 5 hits (10 with a level filter), a sample of the \
+matches. Take counts from summarize_logs; if it cannot count what was asked (an exception or a message rather than a \
+level), give the closest count it can (for example the ERROR count) and say what it does and does not include.
 
 # How to search
 Use at most {budget} search_logs calls per question, in this order, and stop as soon as the question is answered:
@@ -46,7 +50,8 @@ Stop early when a hit matched by both "semantic" and "keyword" already answers t
 For a "why" or root-cause question, do not stop at the first error you find. If a hit shows a nested exception, a \
 "Caused by" line or an unresolved placeholder or variable name, Refine is required: search that text before you answer.
 For "first", "earliest", "last" or "latest" questions, enumerate with a level filter (for example levels ["WARN"], \
-top_k 20) and compare the times yourself. Do not infer it from a narrow time window.
+top_k 10) and compare the times yourself, or take the first and last times from summarize_logs. Do not infer it \
+from a narrow time window.
 A search that was refused for going over the budget did not run: never describe what it found.
 When a search is weak: reword in the log's own vocabulary (the log may say "PID", not "process id"), try word \
 variants (no stemming), split a multi-part question into separate searches, and relax filters one at a time, saying \

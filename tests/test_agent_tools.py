@@ -1,5 +1,6 @@
 """The agent's search_logs tool: arguments, results, and that every failure comes back to the model as text."""
 
+import asyncio
 import json
 from datetime import UTC, datetime
 
@@ -101,14 +102,32 @@ async def test_an_unfiltered_search_shows_at_most_five_hits_however_many_are_ask
 
 
 @pytest.mark.integration
-async def test_a_level_filter_allows_enumerating_up_to_twenty_hits(session_factory, tmp_path):
+async def test_a_level_filter_allows_enumerating_up_to_ten_hits(session_factory, tmp_path):
     tool = await many_error_events(session_factory, tmp_path, 25)
 
     eight = await call(tool, query="pool exhausted", levels=["ERROR"], top_k=8)
     fifty = await call(tool, query="pool exhausted", levels=["ERROR"], top_k=50)
 
     assert len(eight["results"]) == 8 and "note" not in eight
-    assert len(fifty["results"]) == 20 and "top 20 of the 50 requested" in fifty["note"]
+    assert len(fifty["results"]) == 10 and "top 10 of the 50 requested" in fifty["note"]
+
+
+def test_a_top_k_over_the_api_limit_is_clamped_not_rejected():
+    # The provider checks tool arguments against the schema before our code runs: a "maximum" there turned a
+    # model's top_k 100 into a failed request (HTTP 400) instead of a search.
+    def broken_session_factory():
+        raise RuntimeError("no database in this test")
+
+    assert "maximum" not in make_search_logs_tool().args["top_k"]
+    result = asyncio.run(call(make_tool(broken_session_factory), query="UserNotFound", top_k=100))
+
+    assert result == {"error": "search is temporarily unavailable"}  # it got past validation to the search
+
+
+def test_the_tool_description_says_hits_are_never_a_count():
+    from app.agent.tools import DESCRIPTION
+
+    assert "never count" in DESCRIPTION and "summarize_logs" in DESCRIPTION
 
 
 def test_the_tool_description_says_to_filter_by_source_only_when_the_user_named_one():

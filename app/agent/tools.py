@@ -31,7 +31,9 @@ SEARCH_BUDGET = 3  # search_logs calls per question; the graph enforces it (app.
 # The model asked for top_k 10 on its own, which made three searches add up to 7,000+ tokens and hit HTTP 429.
 DEFAULT_TOP_K = 5  # the API default is 10
 MAX_TOP_K = 5  # hits shown for a search without a level filter, whatever top_k says
-MAX_TOP_K_FILTERED = 20  # a level filter is how the model lists every ERROR or WARN, so it may see more
+# A level filter is how the model lists every ERROR or WARN, so it may see more. Not 20: twenty 800-char stack
+# traces plus the prompt made one request of 9,100 tokens, over Groq's 8,000 tokens a minute, and it can never run.
+MAX_TOP_K_FILTERED = 10
 FILTER_ONLY_QUERY = "error"  # stands in when the model searches by filter alone; the filters do the narrowing
 MAX_RAW_TEXT = 800  # characters of one event shown to the model
 
@@ -43,9 +45,10 @@ A very long event (a stack trace) is shortened to its start and end; the middle 
 Choose the arguments from the question:
 - Identifier (error code, class or bean name, id such as HHH000342): put the token alone in `query`, top_k 5.
 - Meaning ("why did startup fail?"): the question in plain words. Without `levels` at most 5 hits are shown, however
-  large top_k is; with `levels` up to 20.
+  large top_k is; with `levels` up to 10.
 - Mixed: plain words plus the identifier exactly as it appears in the log.
-- By severity ("show the errors"): `levels` ["ERROR"], a generic query such as "error", top_k 20.
+- By severity ("show the errors"): `levels` ["ERROR"], a generic query such as "error", top_k 10.
+- Hits are a sample, never a count: never count hits to answer "how many"; summarize_logs counts.
 - By time: `start_time` and `end_time` in UTC (convert from the source's timezone).
 - By application: `source_ids`, only when the user named that application or source. Otherwise leave it out and
   search all sources; never guess which one the question is about.
@@ -62,7 +65,8 @@ class AgentSearchArgs(SearchLogsRequest):
     # searches by level, time or source alone. run() swaps it for FILTER_ONLY_QUERY.
     query: str = Field(max_length=2000, description="Natural-language search query; a short generic word such as "
                                                     "'error' is fine when searching only by level, time or source")
-    top_k: int = Field(default=DEFAULT_TOP_K, ge=1, le=50, description=SearchLogsRequest.model_fields["top_k"].description)
+    # No le: the provider rejects a too-large top_k before our code runs (HTTP 400, the whole question fails).
+    top_k: int = Field(default=DEFAULT_TOP_K, ge=1, description=SearchLogsRequest.model_fields["top_k"].description)
 
 
 def make_search_logs_tool(
@@ -72,9 +76,10 @@ def make_search_logs_tool(
     embed: Callable[[str], list[float]] = embed_query,
 ) -> StructuredTool:
     async def run(**arguments) -> str:
-        request = SearchLogsRequest(**{**arguments, "query": arguments["query"].strip() or FILTER_ONLY_QUERY})
-        requested, cap = request.top_k, MAX_TOP_K_FILTERED if request.levels else MAX_TOP_K
-        request = request.model_copy(update={"top_k": min(requested, cap)})
+        requested = arguments.get("top_k", DEFAULT_TOP_K)
+        cap = MAX_TOP_K_FILTERED if arguments.get("levels") else MAX_TOP_K
+        request = SearchLogsRequest(**{
+            **arguments, "query": arguments["query"].strip() or FILTER_ONLY_QUERY, "top_k": min(requested, cap)})
         try:
             sources = load_sources()
             async with session_factory() as session:

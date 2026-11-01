@@ -2,6 +2,7 @@
 These pin what the code guarantees (the search budget, failure handling, the chat endpoint); whether a real model
 follows the prompt is a separate, slow evaluation."""
 
+import json
 import uuid
 from collections.abc import Iterable
 
@@ -105,6 +106,35 @@ async def test_summaries_have_their_own_budget_and_do_not_use_up_searches():
     assert calls == ["summary", "summary", "q1", "q2", "q3"]
     assert "1 further summary was not run (limit of 2 summaries per question)" in reply.answer
     assert "searches" not in reply.answer.split("Done.", 1)[1]
+
+
+def coverage_tool(statuses: dict[str, str]) -> StructuredTool:
+    async def run(**arguments) -> str:
+        coverage = [{"source_id": s, "status": st, "indexed_through": None} for s, st in statuses.items()]
+        return json.dumps({"groups": [], "coverage": coverage})
+
+    return StructuredTool.from_function(
+        coroutine=run, name="summarize_logs", description="fake", args_schema=LogFilters)
+
+
+async def test_the_answer_says_when_a_source_is_not_fully_indexed_whatever_the_model_wrote():
+    agent = build_agent(
+        model=script(summarize("s1"), AIMessage(content="There are 3 errors.")), tool=fake_tool([]),
+        summary_tool=coverage_tool({"a": "stale", "b": "complete", "c": "not_indexed"}), sources=())
+
+    answer = (await ask(agent, "how many errors?")).answer
+
+    assert answer.startswith("There are 3 errors.")
+    assert "a: the index is stale" in answer and "c: not indexed" in answer
+    assert "b:" not in answer
+
+
+async def test_complete_coverage_adds_no_note():
+    agent = build_agent(
+        model=script(summarize("s1"), AIMessage(content="Done.")), tool=fake_tool([]),
+        summary_tool=coverage_tool({"a": "complete"}), sources=())
+
+    assert (await ask(agent, "q")).answer == "Done."
 
 
 async def test_the_answer_says_when_searches_were_refused_so_the_model_cannot_gloss_over_it():

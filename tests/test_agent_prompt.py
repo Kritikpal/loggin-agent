@@ -72,6 +72,13 @@ def test_open_and_counting_questions_start_with_a_summary_and_precise_ones_skip_
     assert "Skip it" in prompt  # identifier questions go straight to search
 
 
+def test_why_questions_search_and_counts_come_from_the_summary():
+    prompt = build_system_prompt((source("a"),), now=NOW)
+
+    assert "not for \"why\" questions" in prompt
+    assert "Never count search hits" in prompt
+
+
 def test_the_agent_is_told_to_stay_within_the_logs():
     prompt = build_system_prompt((source("a"),), now=NOW)
 
