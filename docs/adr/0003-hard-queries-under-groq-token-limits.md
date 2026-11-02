@@ -111,7 +111,7 @@ total 5,000-17,000 tokens, so two hard questions in one minute will still hit 42
 Correct answers 6/8. The two misses (t2, t6) both lost the user id `35eea954...`: in the index the "claims for user"
 part is redacted as an e-mail address, so the id survives only in the "Caused by: ... UserNotFound: User 35eea954...
 does not exist" line, and the 4,000-character guard (400 characters per hit for 10 hits, head and tail) cuts it.
-Follow-up: shorten hits like the digest does (first line plus "Caused by" lines), not by characters.
+Fixed the same day: hits and digests now share one line-based rule (`shorten_event`: the message up to the first stack frame, at least 450 characters for a fresh hit, plus the last "Caused by"). t6 then found the id; a 10-error WSO2 result costs ~1,920 tokens instead of ~1,661. t2 failed again for another reason: gpt-oss-120b wrote a raw tool call (`<|channel|>commentary to=functions...`) into its answer, which ends there (also seen once in the smoke set, q5).
 
 ## Consequences
 

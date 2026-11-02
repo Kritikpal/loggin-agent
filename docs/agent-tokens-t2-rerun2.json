@@ -1,0 +1,20 @@
+[
+ {
+  "id": "t2-error-count-and-user",
+  "class": "multi_part",
+  "kind": "common",
+  "question": "Before I open a ticket - how many errors did wso2-carbon-0114 log, and which user do they point to?",
+  "answer": "",
+  "tool_calls": [],
+  "error": "request too large for the token limit",
+  "attempts": 1,
+  "checks": {
+   "tools_order": false,
+   "model_calls": true,
+   "batched": false,
+   "budget": true,
+   "answer_has": false,
+   "passed": false
+  }
+ }
+]

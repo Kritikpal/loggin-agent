@@ -1,0 +1,104 @@
+[
+ {
+  "id": "t2-error-count-and-user",
+  "class": "multi_part",
+  "kind": "common",
+  "question": "Before I open a ticket - how many errors did wso2-carbon-0114 log, and which user do they point to?",
+  "answer": "**Findings**\n\n* **Number of ERROR‑level events** in *wso2‑carbon‑0114*: **18** (summarized from the log index).【assistant<|channel|>commentary to=functions.summarize_logs <|constrain|>json<|message|>{\"levels\":[\"ERROR\"],\"source_ids\":[\"wso2-carbon-0114\"]}",
+  "tool_calls": [
+   {
+    "name": "summarize_logs",
+    "turn": 1,
+    "args": {
+     "levels": [
+      "ERROR"
+     ],
+     "source_ids": [
+      "wso2-carbon-0114"
+     ]
+    },
+    "status": "success",
+    "result": "{\"groups\": [{\"source_id\": \"wso2-carbon-0114\", \"level\": \"ERROR\", \"count\": 18, \"first_at\": \"2026-01-14T07:27:34.481000Z\", \"last_at\": \"2026-01-14T10:03:51.541000Z\"}], \"coverage\": [{\"source_id\": \"wso2-carbon-0114\", \"status\": \"complete\", \"indexed_through\": \"2026-01-14T12:08:16.035000Z\", \"last_error\": nul"
+   },
+   {
+    "name": "search_logs",
+    "turn": 2,
+    "args": {
+     "levels": [
+      "ERROR"
+     ],
+     "query": "",
+     "source_ids": [
+      "wso2-carbon-0114"
+     ],
+     "top_k": 10
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"source_id\": \"wso2-carbon-0114\", \"occurred_at\": \"2026-01-14T10:03:51.541000+00:00\", \"level\": \"ERROR\", \"line_start\": 1820, \"line_end\": 1917, \"raw_text\": \"TID: [-1234] [oauth2] [2026-01-14 15:33:51,541] [2646d1d4-1c8e-49b5-96f9-b732ac51ab16] ERROR {org.wso2.carbon.identity.openidconnect."
+   },
+   {
+    "name": "search_logs",
+    "turn": 3,
+    "args": {
+     "levels": [
+      "ERROR"
+     ],
+     "query": "User ",
+     "source_ids": [
+      "wso2-carbon-0114"
+     ],
+     "top_k": 20
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"source_id\": \"wso2-carbon-0114\", \"occurred_at\": \"2026-01-14T10:03:51.541000+00:00\", \"level\": \"ERROR\", \"line_start\": 1820, \"line_end\": 1917, \"raw_text\": \"TID: [-1234] [oauth2] [2026-01-14 15:33:51,541] [2646d1d4-1c8e-49b5-96f9-b732ac51ab16] ERROR {org.wso2.carbon.identity.openidconnect."
+   }
+  ],
+  "model_calls": 4,
+  "attempts": 1,
+  "seconds": 69.8,
+  "checks": {
+   "tools_order": true,
+   "model_calls": false,
+   "batched": false,
+   "budget": true,
+   "answer_has": false,
+   "passed": false
+  }
+ },
+ {
+  "id": "t6-all-errors-common-cause",
+  "class": "heavy_results",
+  "kind": "edge",
+  "question": "Show me every error in wso2-carbon-0114 and tell me what they have in common.",
+  "answer": "**All ERROR‑level events in `wso2‑carbon‑0114`**\n\n| Time (UTC) | Log line range | Logger / Class | Message (truncated) |\n|------------|----------------|----------------|----------------------|\n| 2026‑01‑14 08:51:38.150 | 478‑584 | `org.wso2.carbon.identity.openidconnect.JWTAccessTokenOIDCClaimsHandler` | *Error occurred while getting claims for user … UserNotFound: User **35eea954‑ff98‑4f30‑b56b‑e37d6ef58e47** does not exist in: PRIMARY* |\n| 2026‑01‑14 09:41:54.219 | 892‑998 | `org.wso2.carbon.identity.openidconnect.JWTAccessTokenOIDCClaimsHandler` | same *UserNotFound* message (same user ID) |\n| 2026‑01‑14 09:47:51.311 | 1098‑1204 | `org.wso2.carbon.identity.openidconnect.JWTAccessTokenOIDCClaimsHandler` | same *UserNotFound* message |\n| 2026‑01‑14 09:47:51.413 | 1205‑1303 | `org.wso2.carbon.identity.openidconnect.DefaultOIDCClaimsCallbackHandler` | same *UserNotFound* message |\n| 2026‑01‑14 10:00:36.665 | 1304‑1410 | `org.wso2.carbon.identity.openidconnect.JWTAccessTokenOIDCClaimsHandler` | same *UserNotFound* message |\n| 2026‑01‑14 10:00:36.825 | 1411‑1509 | `org.wso2.carbon.identity.openidconnect.DefaultOIDCClaimsCallbackHandler` | same *UserNotFound* message |\n| 2026‑01‑14 10:03:15.707 | 1510‑1615 | `org.wso2.carbon.identity.openidconnect.JWTAccessTokenOIDCClaimsHandler` | same *UserNotFound* message |\n| 2026‑01‑14 10:03:15.955 | 1616‑1713 | `org.wso2.carbon.identity.openidconnect.DefaultOIDCClaimsCallbackHandler` | same *UserNotFound* message |\n| 2026‑01‑14 10:03:51.391 | 1714‑1819 | `org.wso2.carbon.identity.openidconnect.JWTAccessTokenOIDCClaimsHandler` | same *UserNotFound* message |\n| 2026‑01‑14 10:03:51.541 | 1820‑1917 | `org.wso2.carbon.identity.openidconnect.DefaultOIDCClaimsCallbackHandler` | same *UserNotFound* message |\n\n**What they have in common**\n\n* **Exception type** – every entry ends with `org.wso2.carbon.user.core.UserStoreException: 30007 - UserNotFound`.\n* **User ID** – the same UUID `35eea954‑ff98‑4f30‑b56b‑e37d6ef58e47` is referenced in every error.\n* **Component** – all errors occur while the OpenID Connect/OAuth2 token handling code is trying to fetch claims (`JWTAccessTokenOIDCClaimsHandler` or `DefaultOIDCClaimsCallbackHandler`).\n* **Root cause** – the user does not exist in the `PRIMARY` user store, causing the claim‑retrieval step to fail.\n\n**Next steps you can check manually**\n\n1. Verify that the user with ID `35eea954‑ff98‑4f30‑b56b‑e37d6ef58e47` actually exists in the `PRIMARY` user store (e.g., query the user store or UI).  \n2. If the user should exist, inspect the user‑store configuration (connection details, LDAP/DB sync) for possible connectivity or schema issues.  \n3. Ensure that the OpenID Connect/OAuth2 service is pointing at the correct user‑store name (`PRIMARY`).  \n4. Look for any recent user‑deletion or provisioning jobs that might have removed that user.  \n\nThese checks address the common failure pattern shown in the logs.",
+  "tool_calls": [
+   {
+    "name": "search_logs",
+    "turn": 1,
+    "args": {
+     "levels": [
+      "ERROR"
+     ],
+     "query": "error",
+     "source_ids": [
+      "wso2-carbon-0114"
+     ],
+     "top_k": 100
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"source_id\": \"wso2-carbon-0114\", \"occurred_at\": \"2026-01-14T10:03:51.541000+00:00\", \"level\": \"ERROR\", \"line_start\": 1820, \"line_end\": 1917, \"raw_text\": \"TID: [-1234] [oauth2] [2026-01-14 15:33:51,541] [2646d1d4-1c8e-49b5-96f9-b732ac51ab16] ERROR {org.wso2.carbon.identity.openidconnect."
+   }
+  ],
+  "model_calls": 2,
+  "attempts": 1,
+  "seconds": 4.1,
+  "checks": {
+   "tools_order": true,
+   "model_calls": true,
+   "budget": true,
+   "answer_has": true,
+   "cites": true,
+   "passed": true
+  }
+ }
+]
