@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
-from app.agent.prompt import build_system_prompt
+from app.agent.prompt import PROMPT, PROMPT_VERSION, build_system_prompt
 from app.ingestion.sources import FileSource
 
 NOW = datetime(2026, 3, 10, tzinfo=UTC)
@@ -79,12 +79,10 @@ def test_why_questions_search_and_counts_come_from_the_summary():
     assert "Never count search hits" in prompt
 
 
-def test_independent_lookups_are_batched_in_one_turn_and_dependent_ones_are_not():
-    # ADR-003 layer 1: each model call re-sends ~2,900 tokens, so batching independent lookups saves whole calls
-    prompt = build_system_prompt((source("a"),), now=NOW)
-
-    assert "request their lookups together in one turn" in prompt
-    assert "never batch a lookup that needs another's result" in prompt
+def test_the_prompt_stays_small_because_every_model_call_resends_it():
+    # docs/prompt-compaction-strategy.md: the v1 template was 5,282 chars (~1,320 tokens); every call pays it again
+    assert len(PROMPT) <= 3200
+    assert PROMPT_VERSION == "2.1"
 
 
 def test_the_agent_is_told_to_stay_within_the_logs():
@@ -118,7 +116,14 @@ def test_the_judging_coverage_and_citation_rules_are_stated():
     prompt = build_system_prompt((source("a"),), now=NOW)
 
     assert "nothing relevant" in prompt  # the refusal rule
-    assert "stale" in prompt and "not_indexed" in prompt  # coverage
+    assert "not_indexed" in prompt  # coverage; the stale/partial note is added by code (test_agent_graph)
     assert "cite" in prompt.lower()
     assert "hypothesis" in prompt
     assert "ignore" in prompt.lower()  # log text is data, not instructions
+
+
+def test_citations_have_an_exact_format_with_line_numbers():
+    # v2.0 smoke ss4/q1: answers cited tool names in 【】 marks and no line numbers
+    prompt = build_system_prompt((source("a"),), now=NOW)
+
+    assert "(source_id L<line>, <time>)" in prompt and "e.g. (dev-auth-service L158" in prompt

@@ -9,6 +9,7 @@ never crashes on a tool call. Unexpected errors are logged in full but reported 
 
 import json
 import logging
+from datetime import datetime
 from collections.abc import Callable
 
 from langchain_core.tools import StructuredTool
@@ -43,24 +44,33 @@ MAX_RESULT_TEXT = 4000
 MIN_MESSAGE = 450  # never less: a WSO2 error line is 417 characters and its user id sits at character 334
 MAX_CAUSE = 200  # the root cause line
 
-# Sent with every model call (ADR-003 layer 2), so it holds only how to fill the arguments; the search strategy, time
-# zones, relevance and coverage rules live in the system prompt.
+# Sent with every model call (ADR-003 layer 2), so it holds only what the system prompt does not: what the tool shows
+# and how to fill `query`. Strategy, time zones, relevance and coverage rules live in the system prompt (v2.0).
 DESCRIPTION = """\
-Search the indexed logs (read-only). Returns events (source_id, line, time, level, raw_text, matched_by) and `coverage`.
-Long events keep their message and last "Caused by"; frames become "[...]". At most 5 hits, 10 with `levels`: a
-sample, so never count hits for "how many" (summarize_logs counts). `query`: an identifier alone, plain words, or both; no quotes or operators;
-"error" with `levels` lists by severity. `source_ids` only when the user named the source. Scores are rank-based: never
-compare them across searches."""
+Find log events. Shows at most 5 hits, 10 with `levels`: a sample, so never count hits (summarize_logs counts). \
+`query`: an identifier, plain words or both; no quotes or operators. "error" with `levels` lists by severity. \
+"[...]" marks omitted stack frames. Scores rank hits within one search only."""
 
 
-class AgentSearchArgs(SearchLogsRequest):
-    """The API's request with a smaller default top_k, so the model gets (and pays for) fewer hits unless it asks."""
+class AgentFilters(LogFilters):
+    """LogFilters with short, agent-only field descriptions: they go out with every model call. The public API keeps
+    LogFilters' fuller ones. The source rule sits here, where the argument is filled, on both tools (eval q5)."""
+
+    source_ids: list[str] | None = Field(default=None, description="Only sources the user named; omit to search all")
+    start_time: datetime | None = Field(default=None, description="UTC ISO 8601, e.g. 2026-03-10T10:14:00Z")
+    end_time: datetime | None = Field(default=None, description="UTC ISO 8601")
+    levels: list[str] | None = Field(default=None, description="e.g. ERROR, WARN")
+
+
+class AgentSearchArgs(AgentFilters, SearchLogsRequest):
+    """The API's request with the agent's filter descriptions and a smaller default top_k, so the model gets (and pays
+    for) fewer hits unless it asks."""
 
     # No min_length: the provider rejects an empty query before our code runs, and the model sends one when it
     # searches by level, time or source alone. run() swaps it for FILTER_ONLY_QUERY.
     query: str = Field(max_length=2000, description="Search text")
     # No le: the provider rejects a too-large top_k before our code runs (HTTP 400, the whole question fails).
-    top_k: int = Field(default=DEFAULT_TOP_K, ge=1, description=SearchLogsRequest.model_fields["top_k"].description)
+    top_k: int = Field(default=DEFAULT_TOP_K, ge=1)
 
 
 def make_search_logs_tool(
@@ -96,10 +106,8 @@ SUMMARY_BUDGET = 2  # summarize_logs calls per question, separate from the searc
 MAX_GROUPS = 30  # source/level rows shown; more only happens when a source writes many odd level spellings
 MAX_LEVEL_CHARS = 16  # the level is parsed from untrusted log text: keep it a label, never a sentence
 
-# When to use it is in the system prompt ("Overview first"); this says only what it returns.
-SUMMARY_DESCRIPTION = """\
-Count indexed events per source and level, with first and last times, plus `coverage`. Read-only, no log text, no
-search used. Same filters as search_logs."""
+# When to use it is in the system prompt ("# summarize_logs"); this says only what it returns.
+SUMMARY_DESCRIPTION = "Count events per source and level, with first and last times. No log text."
 
 
 def make_summarize_logs_tool(
@@ -126,7 +134,7 @@ def make_summarize_logs_tool(
         return json.dumps(shown)
 
     return StructuredTool.from_function(
-        coroutine=run, name="summarize_logs", description=SUMMARY_DESCRIPTION, args_schema=LogFilters,
+        coroutine=run, name="summarize_logs", description=SUMMARY_DESCRIPTION, args_schema=AgentFilters,
         handle_validation_error=_validation_message,
     )
 
