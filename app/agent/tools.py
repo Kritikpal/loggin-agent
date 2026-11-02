@@ -36,26 +36,18 @@ MAX_TOP_K = 5  # hits shown for a search without a level filter, whatever top_k 
 MAX_TOP_K_FILTERED = 10
 FILTER_ONLY_QUERY = "error"  # stands in when the model searches by filter alone; the filters do the narrowing
 MAX_RAW_TEXT = 800  # characters of one event shown to the model
+# Characters of log text in one search result, shared by its hits (10 hits get 400 each). With batched calls
+# (ADR-003) three heavy results can land in one request; this keeps them at ~3,000 tokens, under Groq's 8,000.
+MAX_RESULT_TEXT = 4000
 
+# Sent with every model call (ADR-003 layer 2), so it holds only how to fill the arguments; the search strategy, time
+# zones, relevance and coverage rules live in the system prompt.
 DESCRIPTION = """\
-Search the indexed application logs. Read-only. Returns the best-matching events (raw_text, source, line, time, level,
-matched_by) plus `coverage`, how complete the index is per source. It never answers the question; you do.
-A very long event (a stack trace) is shortened to its start and end; the middle is marked "chars omitted".
-
-Choose the arguments from the question:
-- Identifier (error code, class or bean name, id such as HHH000342): put the token alone in `query`, top_k 5.
-- Meaning ("why did startup fail?"): the question in plain words. Without `levels` at most 5 hits are shown, however
-  large top_k is; with `levels` up to 10.
-- Mixed: plain words plus the identifier exactly as it appears in the log.
-- By severity ("show the errors"): `levels` ["ERROR"], a generic query such as "error", top_k 10.
-- Hits are a sample, never a count: never count hits to answer "how many"; summarize_logs counts.
-- By time: `start_time` and `end_time` in UTC (convert from the source's timezone).
-- By application: `source_ids`, only when the user named that application or source. Otherwise leave it out and
-  search all sources; never guess which one the question is about.
-Do not add quotes or operators to `query`. Results are always returned, even for an unrelated question: judge
-relevance yourself. matched_by with both "semantic" and "keyword" is strong evidence; "semantic" alone is a weak lead.
-Scores are rank-based; never compare them across queries. An empty result only means "nothing found" when coverage
-is "complete"."""
+Search the indexed logs (read-only). Returns events (source_id, line, time, level, raw_text, matched_by) and `coverage`.
+Long events are cut to start and end ("chars omitted"). At most 5 hits, 10 with `levels`: a sample, so never count hits
+for "how many" (summarize_logs counts). `query`: an identifier alone, plain words, or both; no quotes or operators;
+"error" with `levels` lists by severity. `source_ids` only when the user named the source. Scores are rank-based: never
+compare them across searches."""
 
 
 class AgentSearchArgs(SearchLogsRequest):
@@ -63,8 +55,7 @@ class AgentSearchArgs(SearchLogsRequest):
 
     # No min_length: the provider rejects an empty query before our code runs, and the model sends one when it
     # searches by level, time or source alone. run() swaps it for FILTER_ONLY_QUERY.
-    query: str = Field(max_length=2000, description="Natural-language search query; a short generic word such as "
-                                                    "'error' is fine when searching only by level, time or source")
+    query: str = Field(max_length=2000, description="Search text")
     # No le: the provider rejects a too-large top_k before our code runs (HTTP 400, the whole question fails).
     top_k: int = Field(default=DEFAULT_TOP_K, ge=1, description=SearchLogsRequest.model_fields["top_k"].description)
 
@@ -102,12 +93,10 @@ SUMMARY_BUDGET = 2  # summarize_logs calls per question, separate from the searc
 MAX_GROUPS = 30  # source/level rows shown; more only happens when a source writes many odd level spellings
 MAX_LEVEL_CHARS = 16  # the level is parsed from untrusted log text: keep it a label, never a sentence
 
+# When to use it is in the system prompt ("Overview first"); this says only what it returns.
 SUMMARY_DESCRIPTION = """\
-Count the indexed log events per source and level, with the first and last event time of each group, plus
-`coverage`. Read-only, returns no log text, and costs no search. Use it for "how many", "when did X start / stop" and
-open questions ("is anything wrong?") to see where to search; skip it when the question names an identifier.
-Filters work as in search_logs: `levels`, `start_time` / `end_time` in UTC, and `source_ids` only when the user named
-the source."""
+Count indexed events per source and level, with first and last times, plus `coverage`. Read-only, no log text, no
+search used. Same filters as search_logs."""
 
 
 def make_summarize_logs_tool(
@@ -148,6 +137,7 @@ def _group(row) -> dict:
 def _compact(response: SearchLogsResponse, note: str | None = None) -> str:
     """The response as the model needs it: what, where and when, without ids, byte offsets or file paths. A stack
     trace can be 20,000 characters, and the model is billed (and rate limited) for every one of them."""
+    per_hit = min(MAX_RAW_TEXT, MAX_RESULT_TEXT // max(len(response.results), 1))
     hits = [
         {
             "source_id": hit.source_id,
@@ -155,7 +145,7 @@ def _compact(response: SearchLogsResponse, note: str | None = None) -> str:
             "level": hit.level,
             "line_start": hit.locator.get("line_start"),
             "line_end": hit.locator.get("line_end"),
-            "raw_text": _shorten(hit.raw_text),
+            "raw_text": _shorten(hit.raw_text, per_hit),
             "score": round(hit.score, 4),
             "matched_by": hit.matched_by,
         }
@@ -165,11 +155,11 @@ def _compact(response: SearchLogsResponse, note: str | None = None) -> str:
     return json.dumps({**shown, "note": note} if note else shown)
 
 
-def _shorten(text: str) -> str:
+def _shorten(text: str, limit: int = MAX_RAW_TEXT) -> str:
     """Keep the start and the end: a trace's cause ("Caused by: ...") is at the bottom."""
-    if len(text) <= MAX_RAW_TEXT:
+    if len(text) <= limit:
         return text
-    head, tail = MAX_RAW_TEXT * 2 // 3, MAX_RAW_TEXT // 3
+    head, tail = limit * 2 // 3, limit // 3
     return f"{text[:head]}\n[... {len(text) - head - tail} chars omitted ...]\n{text[-tail:]}"
 
 

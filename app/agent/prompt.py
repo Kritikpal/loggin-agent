@@ -47,6 +47,8 @@ each verbatim. Use this when step 1 found the right area but not the exact event
 3. Surround: take the time of the key event and search a narrow window (a few seconds either side) with a generic \
 query, to see what happened just before and after.
 Stop early when a hit matched by both "semantic" and "keyword" already answers the question.
+When parts of a question are independent, request their lookups together in one turn; never batch a lookup that \
+needs another's result. Each lookup still counts against the limits above.
 For a "why" or root-cause question, do not stop at the first error you find. If a hit shows a nested exception, a \
 "Caused by" line or an unresolved placeholder or variable name, Refine is required: search that text before you answer.
 For "first", "earliest", "last" or "latest" questions, enumerate with a level filter (for example levels ["WARN"], \

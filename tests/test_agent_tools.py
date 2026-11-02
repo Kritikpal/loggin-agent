@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import uuid
 from datetime import UTC, datetime
 
 import pytest
@@ -153,3 +154,43 @@ async def test_a_reversed_time_range_is_explained_not_raised():
                                  "end_time": "2026-03-10T10:00:00Z"})
 
     assert "start_time must not be after end_time" in answer
+
+
+def hits_response(count: int, chars: int):
+    from app.schemas.search_logs import SearchHit, SearchLogsResponse
+
+    hit = dict(source_id="s", occurred_at=None, level="ERROR", locator={"line_start": 1, "line_end": 2},
+               score=0.5, matched_by=["keyword"])
+    results = [SearchHit(event_id=uuid.uuid4(), raw_text=f"HEAD{n} " + "x" * chars + f" TAIL{n}", **hit)
+               for n in range(count)]
+    return SearchLogsResponse(results=results, coverage=[])
+
+
+def test_many_long_hits_share_one_text_budget_so_a_batched_turn_stays_under_the_token_limit():
+    # ADR-003: three batched searches of 10 stack traces at 800 chars each made one request of ~11,000 tokens
+    from app.agent.tools import MAX_RESULT_TEXT, _compact
+
+    hits = json.loads(_compact(hits_response(10, 3000)))["results"]
+
+    shown = sum(len(hit["raw_text"]) for hit in hits)
+    assert shown <= MAX_RESULT_TEXT + 10 * 40  # 40: the "chars omitted" marker of each shortened hit
+    assert all(f"HEAD{n}" in hit["raw_text"] and f"TAIL{n}" in hit["raw_text"] for n, hit in enumerate(hits))
+
+
+def test_a_few_hits_keep_the_full_per_event_length():
+    from app.agent.tools import MAX_RAW_TEXT, _compact
+
+    hits = json.loads(_compact(hits_response(5, 3000)))["results"]
+
+    assert all(MAX_RAW_TEXT <= len(hit["raw_text"]) <= MAX_RAW_TEXT + 40 for hit in hits)
+
+
+def test_both_tool_definitions_stay_small_because_every_model_call_resends_them():
+    # ADR-003 layer 2: 3,980 chars before the trim; strategy belongs in the system prompt, not here
+    from langchain_core.utils.function_calling import convert_to_openai_tool
+
+    from app.agent.tools import make_summarize_logs_tool
+
+    sent = sum(len(json.dumps(convert_to_openai_tool(t))) for t in (make_search_logs_tool(), make_summarize_logs_tool()))
+
+    assert sent <= 2600  # 2,498 after the trim

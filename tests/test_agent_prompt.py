@@ -79,6 +79,14 @@ def test_why_questions_search_and_counts_come_from_the_summary():
     assert "Never count search hits" in prompt
 
 
+def test_independent_lookups_are_batched_in_one_turn_and_dependent_ones_are_not():
+    # ADR-003 layer 1: each model call re-sends ~2,900 tokens, so batching independent lookups saves whole calls
+    prompt = build_system_prompt((source("a"),), now=NOW)
+
+    assert "request their lookups together in one turn" in prompt
+    assert "never batch a lookup that needs another's result" in prompt
+
+
 def test_the_agent_is_told_to_stay_within_the_logs():
     prompt = build_system_prompt((source("a"),), now=NOW)
 

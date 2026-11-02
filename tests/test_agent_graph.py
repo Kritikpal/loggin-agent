@@ -65,7 +65,23 @@ async def test_the_agent_searches_then_answers_with_the_models_final_text():
     assert reply.answer == "It is unset (L167)."
     assert calls == ["SPRING_DATASOURCE_URL"]
     assert reply.tool_calls == [ToolCall(
-        order=1, name="search_logs", args={"query": "SPRING_DATASOURCE_URL"}, status="success", result=EMPTY_RESULT)]
+        order=1, turn=1, name="search_logs", args={"query": "SPRING_DATASOURCE_URL"}, status="success",
+        result=EMPTY_RESULT)]
+
+
+async def test_calls_requested_together_share_a_turn_so_batching_is_visible():
+    calls: list[str] = []
+    together = AIMessage(content="", tool_calls=[
+        {"name": "search_logs", "args": {"query": "PID"}, "id": "c1", "type": "tool_call"},
+        {"name": "summarize_logs", "args": {}, "id": "s1", "type": "tool_call"}])
+    agent = build_agent(
+        model=script(together, search("Caused by", "c2"), AIMessage(content="Done.")), tool=fake_tool(calls),
+        summary_tool=fake_summary_tool(calls), sources=())
+
+    reply = await ask(agent, "two independent parts")
+
+    assert [(c.order, c.turn, c.name) for c in reply.tool_calls] == [
+        (1, 1, "search_logs"), (2, 1, "summarize_logs"), (3, 2, "search_logs")]
 
 
 async def test_searches_past_the_budget_are_not_run():
@@ -181,8 +197,8 @@ async def test_chat_returns_the_answer_the_tool_calls_and_keeps_the_conversation
     assert res.status_code == 200
     assert res.json() == {
         "response": "Agent says hi.", "status": "COMPLETED", "conversation_id": cid,
-        "tool_calls": [{"order": 1, "name": "search_logs", "args": {"query": "HHH000342"}, "status": "success",
-                        "result": EMPTY_RESULT}],
+        "tool_calls": [{"order": 1, "turn": 1, "name": "search_logs", "args": {"query": "HHH000342"},
+                        "status": "success", "result": EMPTY_RESULT}],
         "memory_conflicts": [],  # the chat UI reads this field; there is no memory feature behind it yet
     }
 
@@ -207,3 +223,37 @@ async def test_chat_strips_control_characters_before_the_agent_sees_them():
         await http.post("/api/v1/ai/chat", json={"message": "  why\x00 500?\x1b  "})
 
     assert seen == ["why 500?"]
+
+
+class RecordingModel(ScriptedModel):
+    """Remembers the messages each model call was sent."""
+
+    seen: list = []
+
+    def _generate(self, messages, *args, **kwargs):
+        self.seen.append(list(messages))
+        return super()._generate(messages, *args, **kwargs)
+
+
+async def test_the_model_gets_earlier_results_as_digests_but_the_reply_keeps_them_in_full():
+    long_hit = {"source_id": "s", "occurred_at": None, "level": "ERROR", "line_start": 158, "line_end": 300,
+                "raw_text": "Driver claims to not accept jdbcUrl\n" + "\tat a.b(C.java:1)\n" * 150 + "Caused by: ROOT",
+                "score": 0.1, "matched_by": ["keyword"]}
+    full = json.dumps({"results": [long_hit], "coverage": []})
+
+    async def run(**arguments) -> str:
+        return full
+
+    tool = StructuredTool.from_function(coroutine=run, name="search_logs", description="fake",
+                                        args_schema=SearchLogsRequest)
+    model = RecordingModel(messages=iter([search("a", "c1"), search("b", "c2"), AIMessage(content="Done.")]))
+    model.seen = []
+
+    reply = await ask(build_agent(model=model, tool=tool, summary_tool=fake_summary_tool([]), sources=()), "why?")
+
+    second_call, last_call = model.seen[1], model.seen[2]
+    assert [m.content for m in second_call if m.type == "tool"] == [full]  # not read yet: full
+    first, latest = [m.content for m in last_call if m.type == "tool"]
+    assert len(first) < 600 and "L158-300" in first and "Caused by: ROOT" in first  # read before: digest
+    assert latest == full
+    assert [c.result for c in reply.tool_calls] == [full, full]  # the API still shows everything

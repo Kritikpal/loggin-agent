@@ -27,6 +27,7 @@ class ToolCall(BaseModel):
     """One tool call the agent made, shown to the developer so they can check the searches behind an answer."""
 
     order: int
+    turn: int = Field(description="Which model turn asked for it; calls sharing a turn ran together")
     name: str
     args: dict[str, Any]
     status: Literal["success", "error"]

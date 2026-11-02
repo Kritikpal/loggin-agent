@@ -11,11 +11,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import ToolCallLimitMiddleware
+from langchain.agents.middleware import ContextEditingMiddleware, ToolCallLimitMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AnyMessage, ToolMessage
 from langchain_core.tools import BaseTool
 
+from app.agent.context import DigestSeenResults
 from app.agent.prompt import Spans, build_system_prompt
 from app.agent.tools import SEARCH_BUDGET, SUMMARY_BUDGET, make_search_logs_tool, make_summarize_logs_tool
 from app.controllers.dependencies import get_sources
@@ -43,7 +44,10 @@ def build_agent(
         model or chat_model(),
         tools,
         system_prompt=build_system_prompt(get_sources() if sources is None else sources, spans),
-        middleware=[ToolCallLimitMiddleware(tool_name=t.name, run_limit=BUDGETS[t.name][0]) for t in tools],
+        middleware=[
+            *(ToolCallLimitMiddleware(tool_name=t.name, run_limit=BUDGETS[t.name][0]) for t in tools),
+            ContextEditingMiddleware(edits=[DigestSeenResults()]),  # ADR-003: earlier results go out as digests
+        ],
     )
 
 
@@ -105,14 +109,16 @@ def _refused_note(tool_calls: list[ToolCall]) -> str:
 
 
 def _tool_calls(messages: list[AnyMessage]) -> list[ToolCall]:
-    """Pair each tool call the model made with the result it got back, in the order they happened."""
+    """Pair each tool call the model made with the result it got back, in the order they happened. `turn` numbers the
+    model turns that asked for tools, so calls batched into one turn share it (ADR-003)."""
     outcomes = {m.tool_call_id: m for m in messages if isinstance(m, ToolMessage)}
-    requested = [call for m in messages if isinstance(m, AIMessage) for call in m.tool_calls]
+    turns = [m.tool_calls for m in messages if isinstance(m, AIMessage) and m.tool_calls]
+    requested = [(turn, call) for turn, calls in enumerate(turns, 1) for call in calls]
     return [
         ToolCall(
-            order=order, name=call["name"], args=call["args"],
+            order=order, turn=turn, name=call["name"], args=call["args"],
             status=outcomes[call["id"]].status if call["id"] in outcomes else "error",
             result=outcomes[call["id"]].text if call["id"] in outcomes else None,
         )
-        for order, call in enumerate(requested, 1)
+        for order, (turn, call) in enumerate(requested, 1)
     ]
