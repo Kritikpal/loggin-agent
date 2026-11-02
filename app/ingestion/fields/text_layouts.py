@@ -31,9 +31,10 @@ SPRING_BOOT = re.compile(
 # <ts> [<thread>] <LEVEL> <logger> - <message>
 LOGBACK_DEFAULT = re.compile(rf"{_TS}[ \t]+{_THREAD}[ \t]+{_LEVEL}[ \t]+{_LOGGER}[ \t]+-{_MESSAGE}")
 # TID: [<tenant>] [<app>] [<ts>] [<correlation id>] <LEVEL> {<logger>} - <message>  (WSO2 Carbon, log4j2). The groups are
-# often empty, the level is space-padded, and some lines (shutdown messages) have no correlation group at all.
+# often empty, the level is space-padded, some lines (shutdown messages) have no correlation group, and the first lines
+# of a start (ConfigParser) have only the time group: "TID: [2026-03-02 16:00:24,804]  INFO {...} - ...".
 WSO2_CARBON = re.compile(
-    rf"TID:[ \t]+\[(?P<tenant>[^\]\n]{{0,128}})\][ \t]+\[(?P<app>[^\]\n]{{0,128}})\][ \t]+\[{_TS}\]"
+    rf"TID:[ \t]+(?:\[(?P<tenant>[^\]\n]{{0,128}})\][ \t]+\[(?P<app>[^\]\n]{{0,128}})\][ \t]+)?\[{_TS}\]"
     rf"(?:[ \t]+\[(?P<correlation>[^\]\n]{{0,128}})\])?[ \t]+{_LEVEL}[ \t]+\{{(?P<logger>[^}}\n]{{1,512}})\}}[ \t]+-{_MESSAGE}"
 )
 LAYOUTS = (  # tried in order; the first match wins

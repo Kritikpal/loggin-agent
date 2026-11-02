@@ -24,7 +24,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 WSO2_LOGS = sorted(FIXTURES.glob("wso2carbon-*.log"))
 LOG_IDS = [path.name for path in WSO2_LOGS]
 TID_START = re.compile(r"TID: \[")
-FIRST_LINE_LEVEL = re.compile(r"^TID: \[[^\]]*\] \[[^\]]*\] \[[^\]]*\](?: \[[^\]]*\])? +([A-Z]+) +\{")
+FIRST_LINE_LEVEL = re.compile(r"^TID: (?:\[[^\]]*\] \[[^\]]*\] )?\[[^\]]*\](?: \[[^\]]*\])? +([A-Z]+) +\{")
 FIRST_LINE_CORRELATION = re.compile(r"^TID: \[[^\]]*\] \[[^\]]*\] \[[^\]]*\] \[([^\]]*)\] +[A-Z]+ +\{")
 
 FULL = ("TID: [-1234] [oauth2] [2026-01-14 12:57:34,481] [8c1113c9-6717-427e-945e-8ee49795f173] ERROR "
@@ -77,6 +77,18 @@ def test_the_variant_without_a_correlation_group_is_parsed_and_its_trailing_spac
     assert (result.parsed.level, result.parsed.message) == ("INFO", "Shutdown complete")
     assert result.parsed.logger == "org.wso2.carbon.core.init.CarbonServerManager"
     assert result.fields == {"tenant": "-1234"} and result.parsed.request_id is None
+
+
+def test_the_startup_variant_with_only_a_time_group_is_parsed():
+    # the first lines of a start (ConfigParser) have no tenant or app group: 2 events each in the 03-02 and 10-30 logs
+    line = ("TID: [2026-03-02 16:00:24,804]  INFO {org.wso2.config.mapper.ConfigParser} - Configurations Changed in "
+            ":repository\\conf\\deployment.toml {org.wso2.config.mapper.ConfigParser}")
+
+    result = parse(line)
+
+    assert (result.parsed.level, result.parsed.logger) == ("INFO", "org.wso2.config.mapper.ConfigParser")
+    assert result.occurred_at == datetime(2026, 3, 2, 10, 30, 24, 804000, tzinfo=UTC)  # 16:00 IST
+    assert result.fields == {}
 
 
 @pytest.mark.parametrize("level", ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"])
