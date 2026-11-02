@@ -257,3 +257,30 @@ async def test_the_model_gets_earlier_results_as_digests_but_the_reply_keeps_the
     assert len(first) < 600 and "L158-300" in first and "Caused by: ROOT" in first  # read before: digest
     assert latest == full
     assert [c.result for c in reply.tool_calls] == [full, full]  # the API still shows everything
+
+
+async def test_a_tool_call_leaked_into_the_answer_text_is_run_as_a_real_call():
+    calls: list[str] = []
+    leaked = AIMessage(content='18 errors so far.【assistant to=functions.search_logs<|channel|>commentary '
+                               '<|constrain|>json<|message|>{"query":"UserNotFound"}')
+    agent = build_agent(model=script(leaked, AIMessage(content="User 35eea954 does not exist.")),
+                        tool=fake_tool(calls), summary_tool=fake_summary_tool([]), sources=())
+
+    reply = await ask(agent, "which user?")
+
+    assert calls == ["UserNotFound"]
+    assert reply.answer == "User 35eea954 does not exist."
+    assert [(c.name, c.args, c.status) for c in reply.tool_calls] == [("search_logs", {"query": "UserNotFound"}, "success")]
+
+
+async def test_recovered_calls_still_count_against_the_search_budget():
+    calls: list[str] = []
+    leak = '【assistant to=functions.search_logs<|channel|>commentary <|constrain|>json<|message|>{{"query":"q{}"}}'
+    agent = build_agent(model=script(*(AIMessage(content=leak.format(n)) for n in range(1, 5)),
+                                     AIMessage(content="Gave up.")),
+                        tool=fake_tool(calls), summary_tool=fake_summary_tool([]), sources=())
+
+    reply = await ask(agent, "find it")
+
+    assert calls == ["q1", "q2", "q3"]
+    assert [c.status for c in reply.tool_calls] == ["success", "success", "success", "error"]

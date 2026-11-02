@@ -17,6 +17,7 @@ from langchain_core.messages import AIMessage, AnyMessage, ToolMessage
 from langchain_core.tools import BaseTool
 
 from app.agent.context import DigestSeenResults
+from app.agent.leaks import RecoverLeakedToolCalls
 from app.agent.prompt import Spans, build_system_prompt
 from app.agent.tools import SEARCH_BUDGET, SUMMARY_BUDGET, make_search_logs_tool, make_summarize_logs_tool
 from app.controllers.dependencies import get_sources
@@ -47,6 +48,7 @@ def build_agent(
         middleware=[
             *(ToolCallLimitMiddleware(tool_name=t.name, run_limit=BUDGETS[t.name][0]) for t in tools),
             ContextEditingMiddleware(edits=[DigestSeenResults()]),  # ADR-003: earlier results go out as digests
+            RecoverLeakedToolCalls(),  # gpt-oss sometimes writes a tool call into its answer text
         ],
     )
 
