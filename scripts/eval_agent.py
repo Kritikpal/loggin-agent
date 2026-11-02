@@ -1,10 +1,9 @@
 """Run the agent golden set (tests/fixtures/agent-golden.yaml) against the real model and the indexed database.
 
     uv run python -m scripts.eval_agent                     all cases; results to docs/<golden file>-eval-<time>.json
-    uv run python -m scripts.eval_agent --smoke             the smoke set: 2 cases per class, after a prompt change
+    uv run python -m scripts.eval_agent --smoke             the smoke set (one case per class), after a prompt change
     uv run python -m scripts.eval_agent --only s1-dev-auth-error-count,q2-identifier-hibernate-code
     uv run python -m scripts.eval_agent --class no_tool
-    uv run python -m scripts.eval_agent --golden tests/fixtures/agent-tokens-golden.yaml   the ADR-003 token set
     uv run python -m scripts.eval_agent --langsmith         also record an experiment in LangSmith
 
 Needs the four fixture sources from sources.yaml indexed (scripts/index_logs.py). The two setups need no database
@@ -164,7 +163,7 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--only", help="comma-separated case ids")
     parser.add_argument("--class", dest="cls", help="run one class only")
-    parser.add_argument("--smoke", action="store_true", help="only the smoke set (2 cases per class)")
+    parser.add_argument("--smoke", action="store_true", help="only the smoke set (one case per class)")
     parser.add_argument("--golden", type=Path, default=GOLDEN, help=f"golden set file (default {GOLDEN})")
     parser.add_argument("--pause", type=float, default=PAUSE, help="seconds between cases")
     parser.add_argument("--langsmith", action="store_true", help="record an experiment in LangSmith")

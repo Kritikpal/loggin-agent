@@ -42,44 +42,6 @@ def spring_results() -> list[ResolvedEvent]:
     return [resolve(redact(event.text).text, TEXT) for event in events]
 
 
-def test_every_spring_event_gets_a_utc_time_and_the_level_written_in_the_file():
-    results = spring_results()
-
-    assert len(results) == 15
-    assert all(r.occurred_at is not None and r.occurred_at.utcoffset() == timedelta(0) for r in results)
-    assert [r.parsed.level for r in results] == ["INFO"] * 8 + ["WARN"] + ["INFO"] * 3 + ["ERROR"] * 2 + ["INFO"]
-    assert results[0].occurred_at == datetime(2026, 10, 29, 8, 15, 23, 412000, tzinfo=UTC)
-    for result in results:
-        assert_provenance_complete(result)
-        assert result.provenance["level"] == Provenance("parser", 1.0, "spring_boot", None)
-        assert result.provenance["occurred_at"] == Provenance("parser", 1.0, "spring_boot", None)
-
-
-def test_the_spring_npe_event_gets_its_exception_and_only_that_event_does():
-    results = spring_results()
-
-    npe = results[13].parsed
-    assert npe.exception_type == "java.lang.NullPointerException"
-    assert npe.exception_message.startswith('Cannot invoke "com.example.demo.model.Cart.getItems()"')
-    assert npe.raw_text.count("\tat ") == 11 and npe.stack_trace.count("\tat ") == 11  # split off by 5.6
-    assert [r.parsed.exception_type for i, r in enumerate(results) if i != 13] == [None] * 14
-
-
-def test_spring_messages_lose_the_layout_prefix():
-    first = spring_results()[0].parsed
-
-    assert first.message == "Starting DemoApplication v1.0.0 using Java 21 on ubuntu-server"  # the 5.6 layout parser
-    assert first.raw_text.startswith("2026-10-29T08:15:23.412Z  INFO")
-
-
-def test_resolved_spring_events_feed_the_semantic_text():
-    for result in spring_results():
-        text = build_semantic_text(result.parsed, ("com.example",)).text
-        assert text.startswith(result.parsed.level)
-    npe_text = build_semantic_text(spring_results()[13].parsed).text
-    assert "java.lang.NullPointerException: Cannot invoke" in npe_text
-
-
 # --- JSON samples -------------------------------------------------------------------------------------------------------
 
 

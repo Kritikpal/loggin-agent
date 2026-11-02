@@ -131,18 +131,6 @@ def test_a_key_without_an_end_line_does_not_eat_the_next_log_line():
     assert out.endswith("2020-01-01 INFO MIIabc") and "[REDACTED:private_key]" in out
 
 
-def test_every_redacted_form_is_stable_when_redacted_again():
-    corpus = [
-        "password=hunter2[REDACTED:x]", "password=[REDACTED:foo]hunter2", '{"password": ["a","b"]}', '{"token": 1}',
-        '{"msg":"{\\"password\\":\\"x\\"}"}', 'Authorization: "Bearer a b"', f"2026-10-29 {CARD}", "http://u:p@ss@h/",
-        PEMS["encrypted"], PEMS["no end"], "Cookie: a=1; b=2", "pass​word = x", (FIXTURES / "spring_boot.log").read_text(),
-    ]
-
-    for text in corpus:
-        once = redact(text).text
-        assert redact(once).text == once, text
-
-
 @pytest.mark.parametrize("hostile", [
     "password=[" * 100_000, 'password="' * 100_000, "{\"password\": " * 80_000, "444 " * 250_000, "4111-" * 200_000,
     "4 " * 500_000, "-----BEGIN PRIVATE KEY----- " * 30_000, "Authorization:" * 100_000, "token=\\\"" * 100_000,

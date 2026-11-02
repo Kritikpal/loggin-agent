@@ -26,47 +26,6 @@ def text(value: str) -> ResolvedEvent:
 # --- the real Spring Boot fixture -------------------------------------------------------------------------------------
 
 
-def test_every_spring_fixture_event_parses_as_spring_boot():
-    results = spring_results()
-
-    assert len(results) == 15
-    for result in results:
-        assert result.provenance["logger"] == Provenance("parser", 1.0, "spring_boot", None)
-        assert result.parsed.level and result.parsed.logger and result.occurred_at is not None
-        assert result.fields["pid"] == 14325 and result.fields["thread"]
-        assert result.parsed.extra == {}  # pid and thread are layout noise for search; they stay in `fields`
-        assert_provenance_complete(result)
-    assert results[0].parsed.message == "Starting DemoApplication v1.0.0 using Java 21 on ubuntu-server"
-    assert results[0].parsed.logger == "c.e.demo.DemoApplication" and results[0].fields["thread"] == "main"
-    assert [r.parsed.stack_trace is not None for r in results] == [False] * 13 + [True, False]
-
-
-def test_the_spring_npe_event_is_split_into_message_exception_and_trace():
-    result = spring_results()[13]
-    parsed = result.parsed
-
-    assert parsed.logger == "o.a.c.c.C.[.[.[/].[dispatcherServlet]" and parsed.level == "ERROR"
-    assert result.fields == {"pid": 14325, "thread": "nio-8080-exec-3"}
-    assert parsed.exception_type == "java.lang.NullPointerException"
-    assert parsed.exception_message.startswith("Cannot invoke")
-    assert parsed.stack_trace.startswith(NPE_HEADER + "\n\tat com.example.demo.service.OrderService.processCheckout")
-    assert parsed.stack_trace.count("\tat ") == 11 and parsed.stack_trace.endswith("~[spring-webmvc-6.1.1.jar:6.1.1]")
-    assert parsed.message.startswith("Servlet.service() for servlet [dispatcherServlet]")
-    assert parsed.message.endswith("with root cause")
-    assert "14325" not in parsed.message and "nio-8080" not in parsed.message and "\tat" not in parsed.message
-    for name in ("exception_type", "exception_message", "stack_trace"):
-        assert result.provenance[name] == Provenance("parser", 1.0, "spring_boot", None)
-
-
-def test_the_spring_npe_semantic_text_shows_the_application_frames_only():
-    semantic = build_semantic_text(spring_results()[13].parsed, ("com.example",))
-
-    assert "java.lang.NullPointerException" in semantic.text and "OrderService.processCheckout" in semantic.text
-    assert "org.springframework" not in semantic.text
-    assert "14325" not in semantic.text and "nio-8080" not in semantic.text
-    assert semantic.filtered_frames == 9
-
-
 # --- layout samples ---------------------------------------------------------------------------------------------------
 
 

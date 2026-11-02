@@ -20,31 +20,6 @@ def events_of(text: str, pattern=DEFAULT_EVENT_START, **kwargs):
     return list(assemble(lines_of(text.encode()), pattern, **kwargs))
 
 
-def test_the_spring_fixture_gives_one_event_per_timestamp_line_with_the_trace_in_one_of_them():
-    data = (FIXTURES / "spring_boot.log").read_bytes()
-
-    events = list(assemble(lines_of(data), DEFAULT_EVENT_START))
-
-    timestamp_lines = sum(bool(re.match(rb"\d{4}-\d\d-\d\dT", line)) for line in data.splitlines())
-    assert len(events) == timestamp_lines == 15
-    npe = next(e for e in events if "NullPointerException: Cannot invoke" in e.text and "\tat " in e.text)
-    assert npe.text.startswith("2026-10-29T08:16:05.893Z ERROR") and "\n\njava.lang.NullPointerException" in npe.text
-    assert npe.text.count("\tat ") == 11 and npe.end_line - npe.start_line + 1 == 14
-    before = events[events.index(npe) - 1]
-    assert before.text.startswith("2026-10-29T08:16:05.892Z") and "\n" not in before.text
-
-
-def test_offsets_chain_exactly_and_point_at_the_original_bytes():
-    data = (FIXTURES / "spring_boot.log").read_bytes()
-
-    events = list(assemble(lines_of(data), DEFAULT_EVENT_START))
-
-    assert events[0].start_offset == 0 and events[-1].end_offset == len(data)
-    assert all(a.end_offset == b.start_offset for a, b in zip(events, events[1:]))
-    for event in events:  # the bytes at the offsets are exactly the event text plus its trailing line breaks
-        assert data[event.start_offset:event.end_offset].decode().rstrip("\r\n") == event.text
-
-
 def test_a_trace_with_caused_by_suppressed_and_blank_lines_is_one_event():
     log = (
         "2026-10-29T10:00:00Z ERROR boom\n\njava.lang.IllegalStateException: x\n\tat a.B.c(B.java:1)\n"

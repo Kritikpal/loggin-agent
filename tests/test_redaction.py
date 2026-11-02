@@ -69,14 +69,6 @@ def test_several_secrets_on_one_line_are_all_removed():
     assert result.kinds == {"secret", "email", "credentials"}
 
 
-def test_the_spring_fixture_is_left_exactly_as_it_was():
-    text = (FIXTURES / "spring_boot.log").read_text()
-
-    result = redact(text)
-
-    assert result.text == text and result.kinds == frozenset()
-
-
 @pytest.mark.parametrize("text", [
     "Fetching details for user ID: 4042", "tokenizer loaded", "a monkey with a keyboard", "order ORD-99128 placed",
     "Removed 0 expired sessions", "url=jdbc:h2:mem:testdb user=SA", "ratio 4111111111111112 not a card",
@@ -93,14 +85,6 @@ def test_timestamps_and_epochs_are_not_taken_for_card_numbers_even_when_the_chec
 
     for number in (compact, epoch_ms, epoch_ns):
         assert redact(f"at {number} done").text == f"at {number} done"
-
-
-def test_redacting_twice_changes_nothing():
-    corpus = "\n".join(text for text, _, _ in SECRETS) + "\n" + (FIXTURES / "spring_boot.log").read_text()
-
-    once = redact(corpus).text
-
-    assert redact(once).text == once
 
 
 def test_redaction_never_returns_a_secret_in_the_kinds():

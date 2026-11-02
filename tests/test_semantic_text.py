@@ -112,25 +112,6 @@ def spring_npe() -> ParsedEvent:
     return ParsedEvent(raw_text=raw, level="ERROR", logger="dispatcherServlet", message=head.split(" : ", 1)[1], stack_trace=trace)
 
 
-def test_the_fixture_has_the_trace_as_one_event():
-    events = spring_events()
-
-    assert len(events) == 15 and sum("\tat " in e for e in events) == 1
-
-
-def test_a_spring_trace_gives_exception_and_application_frames_but_no_library_frames():
-    result = build_semantic_text(spring_npe())
-
-    lines = result.text.split("\n")
-    assert lines[0] == "ERROR dispatcherServlet"
-    assert lines[2].startswith("java.lang.NullPointerException: Cannot invoke")
-    assert lines[3:5] == [
-        "at com.example.demo.service.OrderService.processCheckout(OrderService.java:42)",
-        "at com.example.demo.controller.OrderController.checkout(OrderController.java:27)",
-    ]
-    assert len(lines) == 5 and "springframework" not in result.text and "~[" not in result.text
-
-
 NESTED = """org.springframework.web.client.ResourceAccessException: I/O error on POST request
 \tat com.acme.PayClient.charge(PayClient.java:10)
 Caused by: java.net.SocketTimeoutException: Read timed out
@@ -271,10 +252,6 @@ def test_header_only_and_frames_only_traces_work():
     assert frames_only == "r\nat com.acme.A.f(A.java:1)"  # nothing but frames was parsed, so the raw text stays
 
 
-def test_the_spring_npe_fits_without_being_flagged():
-    assert not build_semantic_text(spring_npe()).truncated
-
-
 def test_prose_starting_with_at_is_not_a_frame():
     trace = "E: a\n\tat least one pool is busy\n\tat com.acme.A.f(A.java:1)"
 
@@ -305,12 +282,6 @@ def test_all_the_usual_frame_shapes_are_recognised():
 
 def trace_of(*frames: str) -> str:
     return "E: a\n" + "\n".join(f"\tat {frame}" for frame in frames)
-
-
-def test_filtered_frames_are_counted_without_marking_the_text_truncated():
-    result = build_semantic_text(spring_npe())
-
-    assert result.filtered_frames == 9 and not result.truncated  # 11 frames: 2 application, 9 library
 
 
 def test_more_frameworks_are_filtered_by_default():

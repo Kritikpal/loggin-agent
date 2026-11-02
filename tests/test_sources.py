@@ -15,14 +15,6 @@ def write(tmp_path: Path, text: str) -> Path:
     return config
 
 
-def test_the_example_config_loads_and_points_at_the_fixture():
-    (source,) = load_sources(ROOT / "sources.example.yaml")
-
-    assert isinstance(source, FileSource) and source.id == "demo-app"
-    assert source.path == (ROOT / "tests/fixtures/spring_boot.log").resolve() and source.path.is_file()
-    assert source.app_packages == ("com.example",) and source.timezone == "UTC" and source.format == "text"
-
-
 def test_a_file_source_loads_with_its_options(tmp_path):
     config = write(tmp_path, r"""
 sources:

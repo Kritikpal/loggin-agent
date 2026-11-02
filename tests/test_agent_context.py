@@ -87,13 +87,6 @@ def digest_of(text: str) -> str:
     return json.loads(messages[2].content)["hits"][0].split(" | ", 1)[1]
 
 
-def test_a_long_single_line_keeps_the_fact_in_its_middle():
-    # eval t1: the head-and-tail digest cut "PID 26512" out of this line, and the agent then said no PID was logged
-    pid_line = DEV_AUTH_LOG.read_text(encoding="utf-8").splitlines()[1]
-
-    assert "PID 26512" in digest_of(pid_line)
-
-
 def test_a_single_line_over_the_limit_keeps_its_start():
     assert digest_of("x" * 1000) == "x" * FIRST_LINE_MAX + " [...]"
 

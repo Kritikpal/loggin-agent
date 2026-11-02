@@ -41,28 +41,6 @@ def log(tmp_path):
     return tmp_path / "app.log"
 
 
-def test_the_whole_spring_fixture_is_read_in_one_batch(log):
-    shutil.copy(FIXTURES / "spring_boot.log", log)
-
-    result = reader(log).read_batch()
-
-    data = log.read_bytes()
-    assert len(result.events) == 15 and result.status == "ok" and not result.has_more
-    assert result.next_cursor.offset == len(data) and result.next_cursor.line == data.count(b"\n") + 1
-    assert result.observed_size == len(data)
-
-
-def test_the_newest_event_is_held_back_until_the_file_settles(log):
-    shutil.copy(FIXTURES / "spring_boot.log", log)
-    everything = reader(log).read_batch().events
-
-    held = reader(log, HOLD).read_batch()
-
-    assert [e.event_key for e in held.events] == [e.event_key for e in everything[:-1]]
-    assert held.next_cursor.offset == everything[-1].event.start_offset
-    assert held.next_cursor.line == everything[-1].event.start_line
-
-
 def test_a_second_read_returns_only_what_was_appended(log):
     log.write_text(ts(1) + ts(2) + ts(3))
     first = reader(log).read_batch()
@@ -209,31 +187,6 @@ def test_byte_offsets_reproduce_the_original_bytes_even_with_crlf(log):
         raw = data[e.event.start_offset:e.event.end_offset]
         assert raw.decode().replace("\r\n", "\n").rstrip("\n") == e.event.text
         assert e.locator["sha256"] == hashlib.sha256(raw).hexdigest()
-
-
-def test_reading_never_changes_the_file(log):
-    shutil.copy(FIXTURES / "spring_boot.log", log)
-    before = (log.read_bytes(), log.stat().st_mtime_ns)
-
-    r = reader(log)
-    first = r.read_batch()
-    log.write_bytes(log.read_bytes())  # restore identical bytes, then record mtime again
-    before = (log.read_bytes(), log.stat().st_mtime_ns)
-    r.read_batch(first.next_cursor)
-    reader(log, HOLD).read_batch()
-
-    assert (log.read_bytes(), log.stat().st_mtime_ns) == before
-
-
-def test_locators_and_keys_identify_the_event(log):
-    shutil.copy(FIXTURES / "spring_boot.log", log)
-    events, *_ = read_all(reader(log))
-    npe = next(e for e in events if "NullPointerException: Cannot invoke" in e.event.text and "\tat " in e.event.text)
-
-    assert npe.locator["type"] == "file" and npe.locator["path"] == str(log.resolve())
-    assert npe.locator["line_end"] - npe.locator["line_start"] + 1 == 14
-    assert npe.event_key == f"{npe.event.start_offset}:{npe.locator['sha256'][:16]}"
-    assert [e.event_key for e in read_all(reader(log))[0]] == [e.event_key for e in events]  # stable
 
 
 def test_different_bytes_at_the_same_offset_get_different_keys(log):

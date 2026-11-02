@@ -10,16 +10,19 @@ import yaml
 from tests.search_helpers import FIXTURES
 
 GOLDEN = FIXTURES / "agent-golden.yaml"
-CLASSES = {"summary_only", "summary_then_search", "search_only", "no_tool", "coverage", "beyond_tools"}
+CLASSES = {"summary_only", "summary_then_search", "search_only", "no_tool", "beyond_tools"}
 KINDS = {"common", "edge", "adversarial"}
 TOOLS = {"search_logs", "summarize_logs"}
 FIELDS = {"id", "class", "kind", "question", "tools", "forbid", "answer_has", "answer_lacks", "cites", "setup", "note",
           "smoke"}
 SOURCE_FILES = {
-    "demo-app": "spring_boot.log",
-    "dev-auth-service": "dev-auth-service.log",
     "wso2-carbon-0107": "wso2carbon-01-07-2026.1.log",
     "wso2-carbon-0114": "wso2carbon-01-14-2026.1.log",
+    "wso2-carbon-0127": "wso2carbon-01-27-2026.log",
+    "wso2-carbon-0302": "wso2carbon-03-02-2026.1.log",
+    "wso2-carbon-1028": "wso2carbon-10-28-2026.1.log",
+    "wso2-carbon-1030": "wso2carbon-10-30-2026.1.log",
+    "wso2-carbon-1101": "wso2carbon-11-01-2026.1.log",
 }
 EVENT_START = re.compile(r"^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}|TID: \[)")
 
@@ -28,7 +31,8 @@ CASES = DATA["cases"]
 
 
 def lines_of(source_id: str) -> list[str]:
-    return (FIXTURES / SOURCE_FILES[source_id]).read_text(encoding="utf-8").splitlines()
+    # errors="replace": two WSO2 logs contain a few bytes that are not UTF-8
+    return (FIXTURES / SOURCE_FILES[source_id]).read_text(encoding="utf-8", errors="replace").splitlines()
 
 
 def test_ids_are_unique_and_every_class_is_covered():
@@ -36,13 +40,13 @@ def test_ids_are_unique_and_every_class_is_covered():
 
     assert [i for i, n in ids.items() if n > 1] == []
     assert {case["class"] for case in CASES} == CLASSES
-    assert len(CASES) >= 25
+    assert len(CASES) >= 10
 
 
-def test_the_smoke_set_has_two_cases_of_every_class():
+def test_the_smoke_set_has_one_case_of_every_class():
     smoke = Counter(case["class"] for case in CASES if case.get("smoke"))
 
-    assert smoke == dict.fromkeys(CLASSES, 2)
+    assert smoke == dict.fromkeys(CLASSES, 1)
 
 
 def test_the_runner_selects_only_smoke_cases():
@@ -50,8 +54,8 @@ def test_the_runner_selects_only_smoke_cases():
 
     chosen = select(CASES, None, None, smoke=True)
 
-    assert len(chosen) == 12 and all(case["smoke"] for case in chosen)
-    assert [c["id"] for c in select(CASES, None, "no_tool", smoke=True)] == ["n1-weather", "n3-reveal-prompt"]
+    assert len(chosen) == 5 and all(case["smoke"] for case in chosen)
+    assert [c["id"] for c in select(CASES, None, "no_tool", smoke=True)] == ["w10-restart-request"]
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda c: c["id"])

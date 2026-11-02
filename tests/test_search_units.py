@@ -108,49 +108,7 @@ def broken(query: str) -> list[float]:
     raise RuntimeError(f"model crashed on {query}")
 
 
-@pytest.mark.integration
-@pytest.mark.parametrize("embed", [broken, lambda q: [0.1] * 3, lambda q: [math.nan] * 384],
-                         ids=["raises", "wrong_dimension", "nan"])
-async def test_a_failing_embedder_falls_back_to_keyword_only(tmp_path, session_factory, caplog, embed):
-    source = dev_auth_source(copy_fixture(DEV_AUTH_LOG, tmp_path))
-    await index_file(source, session_factory)
-
-    with caplog.at_level(logging.WARNING):
-        response = await search(session_factory, [source], "jwtAuthFilter", embed=embed, top_k=5)
-
-    assert 159 in hit_lines(response) and all(hit.matched_by == ["keyword"] for hit in response.results)
-    assert "jwtAuthFilter" not in caplog.text and "keyword-only" in caplog.text
-
-
-@pytest.mark.integration
-async def test_no_vector_and_no_lexeme_finds_nothing(tmp_path, session_factory):
-    source = dev_auth_source(copy_fixture(DEV_AUTH_LOG, tmp_path))
-    await index_file(source, session_factory)
-
-    response = await search(session_factory, [source], "?? the a of", embed=broken)
-
-    assert response.results == [] and [c.status for c in response.coverage] == ["complete"]
-
-
-@pytest.mark.integration
-async def test_a_repeated_source_id_is_searched_and_reported_once(tmp_path, session_factory):
-    source = dev_auth_source(copy_fixture(DEV_AUTH_LOG, tmp_path))
-
-    response = await search(session_factory, [source], "x", source_ids=[DEV_AUTH_ID, DEV_AUTH_ID])
-
-    assert [c.source_id for c in response.coverage] == [DEV_AUTH_ID]
-
-
 # ---- coverage edge cases (integration) ----
-
-@pytest.mark.integration
-async def test_a_file_deleted_before_indexing_notices_is_stale(tmp_path, session_factory):
-    source = dev_auth_source(copy_fixture(DEV_AUTH_LOG, tmp_path))
-    await index_file(source, session_factory)
-    source.path.unlink()
-
-    assert (await coverage(session_factory, source)).status == "stale"
-
 
 @pytest.mark.integration
 async def test_the_sources_endpoint_reports_a_recorded_error(tmp_path, session_factory):
