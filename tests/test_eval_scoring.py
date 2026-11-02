@@ -78,3 +78,29 @@ def test_a_line_must_appear_as_a_whole_number_also_after_an_l():
 
 def test_forbidden_text_fails():
     assert not score({"tools": [], "answer_lacks": ["0 errors"]}, "There are 0 errors.", [])["answer_lacks"]
+
+
+def at(name: str, turn: int) -> dict:
+    return {"name": name, "status": "success", "args": {}, "turn": turn}
+
+
+def test_tools_asked_for_in_the_same_turn_count_as_in_order_whichever_comes_back_first():
+    case = {"tools": ["summarize_logs", "search_logs"]}
+
+    assert score(case, "x", [at("search_logs", 1), at("summarize_logs", 1)])["tools_order"]
+    assert not score(case, "x", [at("search_logs", 1), at("summarize_logs", 2)])["tools_order"]
+
+
+def test_model_calls_are_the_turns_that_asked_for_tools_plus_the_answer():
+    case = {"tools": ["search_logs"], "max_model_calls": 3}
+
+    assert score(case, "x", [at("search_logs", 1), at("search_logs", 1), at("search_logs", 2)])["model_calls"]
+    assert not score(case, "x", [at("search_logs", n) for n in (1, 2, 3)])["model_calls"]
+
+
+def test_expect_batch_needs_one_turn_with_two_or_more_tools():
+    case = {"tools": ["search_logs"], "expect_batch": True}
+
+    assert score(case, "x", [at("search_logs", 1), at("summarize_logs", 1)])["batched"]
+    assert not score(case, "x", [at("search_logs", 1), at("summarize_logs", 2)])["batched"]
+    assert "batched" not in score({"tools": [], "expect_batch": False}, "x", [])

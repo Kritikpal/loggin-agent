@@ -1,0 +1,314 @@
+[
+ {
+  "id": "t1-boot-failure-and-pid",
+  "class": "multi_part",
+  "kind": "common",
+  "question": "dev-auth-service won't boot. What's the root cause, and which PID was it running as?",
+  "answer": "**Root cause:** the datasource URL was never resolved — the app tried to connect using the literal placeholder `${SPRING_DATASOURCE_URL}`, so the PostgreSQL driver rejected it and the JPA EntityManagerFactory (and therefore the web server) failed to start.\n\n- `dev-auth-service` L18, 2026-03-10T10:14:06.923Z (WARN): `HHH000342: Could not obtain connection to query metadata` — `java.lang.RuntimeException: Driver org.postgresql.Driver claims to not accept jdbcUrl, ${SPRING_DATASOURCE_URL}`\n- `dev-auth-service` L158, 10:14:08.169Z (ERROR): `Failed to initialize JPA EntityManagerFactory ... Unable to build Hibernate SessionFactory; nested exception is java.lang.RuntimeException: Driver org.postgresql.Driver claims to not accept jdbcUrl, ${SPRING_DATASOURCE_URL}`\n- `dev-auth-service` L159, 10:14:08.170Z (ERROR): `Error starting Tomcat context` — `UnsatisfiedDependencyException` creating bean `jwtAuthFilter` (downstream of the datasource failure)\n- `dev-auth-service` L167, 10:14:08.219Z (ERROR): `Application run failed` — `ApplicationContextException: Unable to start web server`\n\n**PID:** 26512 — `dev-auth-service` L2, 10:14:03.842Z: `Starting AuthServiceApplication using Java 17.0.15 with PID 26512` (started by Mithilesh, profile `dev`).\n\n**Suggested manual check:** verify that `SPRING_DATASOURCE_URL` is actually set in the environment (or in the active `dev` profile's config) before starting the app — the unresolved placeholder means Spring never substituted it.",
+  "tool_calls": [
+   {
+    "name": "search_logs",
+    "turn": 1,
+    "args": {
+     "levels": [
+      "ERROR",
+      "WARN"
+     ],
+     "query": "dev-auth-service",
+     "source_ids": [
+      "dev-auth-service"
+     ],
+     "top_k": 10
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"source_id\": \"dev-auth-service\", \"occurred_at\": \"2026-03-10T10:14:08.170000+00:00\", \"level\": \"ERROR\", \"line_start\": 159, \"line_end\": 159, \"raw_text\": \"2026-03-10 15:44:08.170 [main] ERROR o.s.b.w.e.tomcat.TomcatStarter - Error starting Tomcat context. Exception: org.springframework.bea"
+   },
+   {
+    "name": "search_logs",
+    "turn": 2,
+    "args": {
+     "query": "PID",
+     "source_ids": [
+      "dev-auth-service"
+     ],
+     "top_k": 5
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"source_id\": \"dev-auth-service\", \"occurred_at\": \"2026-03-10T10:14:03.842000+00:00\", \"level\": \"INFO\", \"line_start\": 2, \"line_end\": 2, \"raw_text\": \"2026-03-10 15:44:03.842 [main] INFO  c.t.smrd.AuthServiceApplication - Starting AuthServiceApplication using Java 17.0.15 with PID 26512 (D:"
+   },
+   {
+    "name": "search_logs",
+    "turn": 3,
+    "args": {
+     "query": "Driver org.postgresql.Driver claims to not accept",
+     "source_ids": [
+      "dev-auth-service"
+     ],
+     "top_k": 5
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"source_id\": \"dev-auth-service\", \"occurred_at\": \"2026-03-10T10:14:08.219000+00:00\", \"level\": \"ERROR\", \"line_start\": 167, \"line_end\": 323, \"raw_text\": \"2026-03-10 15:44:08.219 [main] ERROR o.s.boot.SpringApplication - Application run failed\\norg.springframework.context.ApplicationContex"
+   }
+  ],
+  "model_calls": 4,
+  "attempts": 1,
+  "seconds": 94.0,
+  "checks": {
+   "tools_order": true,
+   "model_calls": false,
+   "batched": false,
+   "budget": true,
+   "answer_has": true,
+   "cites": true,
+   "passed": false
+  }
+ },
+ {
+  "id": "t2-error-count-and-user",
+  "class": "multi_part",
+  "kind": "common",
+  "question": "Before I open a ticket - how many errors did wso2-carbon-0114 log, and which user do they point to?",
+  "answer": "**18 ERROR events** in wso2-carbon-0114 (first 2026-01-14 07:27:34 UTC, last 10:03:51 UTC; coverage complete).\n\nAll sampled errors are the same failure: `Error occurred while getting claims for user: [REDACTED:email] from userstore` in the OIDC claims handlers (`JWTAccessTokenOIDCClaimsHandler` / `DefaultOIDCClaimsCallbackHandler`), with the stack trace ending in `AbstractUserStoreManager.getUserClaimValues` (e.g. line 1820 at 10:03:51 UTC, line 478 at 08:51:38 UTC).\n\nOne caveat: the user's identity is redacted in the log text (`[REDACTED:email]`), so I can't name the user from the logs — but every error points to the same single user. If you need the actual username, check the userstore or the OAuth2 request context outside these logs.",
+  "tool_calls": [
+   {
+    "name": "summarize_logs",
+    "turn": 1,
+    "args": {
+     "levels": [
+      "ERROR"
+     ],
+     "source_ids": [
+      "wso2-carbon-0114"
+     ]
+    },
+    "status": "success",
+    "result": "{\"groups\": [{\"source_id\": \"wso2-carbon-0114\", \"level\": \"ERROR\", \"count\": 18, \"first_at\": \"2026-01-14T07:27:34.481000Z\", \"last_at\": \"2026-01-14T10:03:51.541000Z\"}], \"coverage\": [{\"source_id\": \"wso2-carbon-0114\", \"status\": \"complete\", \"indexed_through\": \"2026-01-14T12:08:16.035000Z\", \"last_error\": nul"
+   },
+   {
+    "name": "search_logs",
+    "turn": 2,
+    "args": {
+     "levels": [
+      "ERROR"
+     ],
+     "query": "error",
+     "source_ids": [
+      "wso2-carbon-0114"
+     ],
+     "top_k": 10
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"source_id\": \"wso2-carbon-0114\", \"occurred_at\": \"2026-01-14T10:03:51.541000+00:00\", \"level\": \"ERROR\", \"line_start\": 1820, \"line_end\": 1917, \"raw_text\": \"TID: [-1234] [oauth2] [2026-01-14 15:33:51,541] [2646d1d4-1c8e-49b5-96f9-b732ac51ab16] ERROR {org.wso2.carbon.identity.openidconnect."
+   }
+  ],
+  "model_calls": 3,
+  "attempts": 1,
+  "seconds": 39.5,
+  "checks": {
+   "tools_order": true,
+   "model_calls": true,
+   "batched": false,
+   "budget": true,
+   "answer_has": false,
+   "passed": false
+  }
+ },
+ {
+  "id": "t3-health-check-two-sources",
+  "class": "multi_part",
+  "kind": "common",
+  "question": "Quick health check: does wso2-carbon-0107 have any errors, and how long did WSO2 take to start up on 14 January?",
+  "answer": "Both questions answered:\n\n**wso2-carbon-0107 errors:** None. The ERROR count for that source is 0 (coverage complete through 2026-01-07 11:25:34 UTC).\n\n**WSO2 startup time on 14 January:** 288 seconds (~4 min 48 s).\n- Start: `wso2-carbon-0114`, line 2, 2026-01-14 12:50:56 local (07:20:56 UTC) — \"Starting WSO2 Carbon...\"\n- Finish: `wso2-carbon-0114`, line 59, 2026-01-14 12:54:54 local (07:24:54 UTC) — \"WSO2 Carbon started in 288 sec\" (WSO2 Identity Server-7.1.0)",
+  "tool_calls": [
+   {
+    "name": "summarize_logs",
+    "turn": 1,
+    "args": {
+     "levels": [
+      "ERROR"
+     ],
+     "source_ids": [
+      "wso2-carbon-0107"
+     ]
+    },
+    "status": "success",
+    "result": "{\"groups\": [], \"coverage\": [{\"source_id\": \"wso2-carbon-0107\", \"status\": \"complete\", \"indexed_through\": \"2026-01-07T11:25:34.175000Z\", \"last_error\": null}]}"
+   },
+   {
+    "name": "search_logs",
+    "turn": 1,
+    "args": {
+     "query": "WSO2 Carbon startup",
+     "source_ids": [
+      "wso2-carbon-0114"
+     ]
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"source_id\": \"wso2-carbon-0114\", \"occurred_at\": \"2026-01-14T07:20:56.047000+00:00\", \"level\": \"INFO\", \"line_start\": 2, \"line_end\": 2, \"raw_text\": \"TID: [] [] [2026-01-14 12:50:56,047] []  INFO {org.wso2.carbon.core.internal.CarbonCoreActivator} - Starting WSO2 Carbon...\", \"score\": 0.032"
+   }
+  ],
+  "model_calls": 2,
+  "attempts": 2,
+  "seconds": 72.5,
+  "checks": {
+   "tools_order": true,
+   "model_calls": true,
+   "batched": true,
+   "budget": true,
+   "answer_has": true,
+   "cites": true,
+   "passed": true
+  }
+ },
+ {
+  "id": "t4-checkout-failure-and-other-errors",
+  "class": "multi_part",
+  "kind": "common",
+  "question": "A customer's checkout failed on order ORD-99128. What went wrong, and are there other errors in demo-app?",
+  "answer": "**What went wrong with ORD-99128:** the checkout failed with a `NullPointerException` — the `Cart` object was null when `OrderService.processCheckout` tried to call `cart.getItems()`.\n\n- `demo-app` L13, 2026-10-29T08:16:05.892Z (ERROR): `Failed to process checkout for order sequence ORD-99128`\n- `demo-app` L14–27, 2026-10-29T08:16:05.893Z (ERROR): `Servlet.service() ... threw exception [Request processing failed: java.lang.NullPointerException: Cannot invoke \"com.example.demo.model.Cart.getItems()\" because \"cart\" is null]`, root cause at `com.example.demo.service.OrderService.processCheckout(OrderService.java...)`\n\nSo the cart lookup returned null for that order (e.g., no cart persisted for the user/session, or it was cleared) and the code dereferenced it without a null check.\n\n**Other errors in demo-app:** none. The only ERROR events in the source are the two above (same incident). The only other non-INFO event is a startup WARN at L9 (08:15:26.940Z): `HHH000477: You are using the H2 dialect which is excellent for prototyping but not recommended for production` — a config warning, not related to the failure.\n\nSuggested manual checks:\n- Verify how the cart is loaded in `OrderService.processCheckout` (e.g., `cartRepository.findById(...)` returning empty) and add a null/empty guard or a proper 404 response.\n- Check whether the customer's cart was ever created/persisted before checkout (session vs. DB-backed cart).\n- Note the app is running on in-memory H2 (`jdbc:h2:mem:testdb`, L7) — carts won't survive restarts, which could explain a missing cart.",
+  "tool_calls": [
+   {
+    "name": "search_logs",
+    "turn": 1,
+    "args": {
+     "query": "ORD-99128",
+     "source_ids": [
+      "demo-app"
+     ]
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"source_id\": \"demo-app\", \"occurred_at\": \"2026-10-29T08:16:05.892000+00:00\", \"level\": \"ERROR\", \"line_start\": 13, \"line_end\": 13, \"raw_text\": \"2026-10-29T08:16:05.892Z ERROR 14325 --- [nio-8080-exec-3] c.e.demo.service.OrderService           : Failed to process checkout for order sequenc"
+   },
+   {
+    "name": "search_logs",
+    "turn": 1,
+    "args": {
+     "levels": [
+      "ERROR"
+     ],
+     "query": "checkout",
+     "source_ids": [
+      "demo-app"
+     ]
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"source_id\": \"demo-app\", \"occurred_at\": \"2026-10-29T08:16:05.892000+00:00\", \"level\": \"ERROR\", \"line_start\": 13, \"line_end\": 13, \"raw_text\": \"2026-10-29T08:16:05.892Z ERROR 14325 --- [nio-8080-exec-3] c.e.demo.service.OrderService           : Failed to process checkout for order sequenc"
+   },
+   {
+    "name": "search_logs",
+    "turn": 2,
+    "args": {
+     "levels": [
+      "ERROR",
+      "WARN"
+     ],
+     "query": "cart",
+     "source_ids": [
+      "demo-app"
+     ],
+     "top_k": 10
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"source_id\": \"demo-app\", \"occurred_at\": \"2026-10-29T08:16:05.893000+00:00\", \"level\": \"ERROR\", \"line_start\": 14, \"line_end\": 27, \"raw_text\": \"2026-10-29T08:16:05.893Z ERROR 14325 --- [nio-8080-exec-3] o.a.c.c.C.[.[.[/].[dispatcherServlet]    : Servlet.service() for servlet [dispatcherSe"
+   }
+  ],
+  "model_calls": 3,
+  "attempts": 1,
+  "seconds": 40.1,
+  "checks": {
+   "tools_order": false,
+   "model_calls": true,
+   "batched": true,
+   "budget": true,
+   "answer_has": true,
+   "cites": true,
+   "passed": false
+  }
+ },
+ {
+  "id": "t5-jwt-filter-cause-chain",
+  "class": "why_chain",
+  "kind": "common",
+  "question": "Why does jwtAuthFilter fail to load? Follow it down to the real cause.",
+  "answer": "",
+  "tool_calls": [],
+  "error": "AI unavailable",
+  "attempts": 3,
+  "checks": {
+   "tools_order": false,
+   "model_calls": true,
+   "budget": true,
+   "answer_has": false,
+   "cites": false,
+   "passed": false
+  }
+ },
+ {
+  "id": "t6-all-errors-common-cause",
+  "class": "heavy_results",
+  "kind": "edge",
+  "question": "Show me every error in wso2-carbon-0114 and tell me what they have in common.",
+  "answer": "",
+  "tool_calls": [],
+  "error": "request too large for the token limit",
+  "attempts": 2,
+  "checks": {
+   "tools_order": false,
+   "model_calls": true,
+   "budget": true,
+   "answer_has": false,
+   "cites": false,
+   "passed": false
+  }
+ },
+ {
+  "id": "t7-incident-window-ist",
+  "class": "timeline",
+  "kind": "edge",
+  "question": "We had an incident on WSO2 on 14 January around 14:20 IST. What happened?",
+  "answer": "",
+  "tool_calls": [],
+  "error": "request too large for the token limit",
+  "attempts": 1,
+  "checks": {
+   "tools_order": false,
+   "model_calls": true,
+   "budget": true,
+   "answer_has": false,
+   "cites": false,
+   "passed": false
+  }
+ },
+ {
+  "id": "t8-java-version",
+  "class": "baseline",
+  "kind": "common",
+  "question": "What Java version is dev-auth-service running on?",
+  "answer": "dev-auth-service is running on **Java 17.0.15**.\n\nSource: dev-auth-service, line 2, 2026-03-10 15:44:03.842 (local, UTC+05:30):\n> `Starting AuthServiceApplication using Java 17.0.15 with PID 26512`",
+  "tool_calls": [
+   {
+    "name": "search_logs",
+    "turn": 1,
+    "args": {
+     "query": "Java version",
+     "source_ids": [
+      "dev-auth-service"
+     ]
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"source_id\": \"dev-auth-service\", \"occurred_at\": \"2026-03-10T10:14:06.533000+00:00\", \"level\": \"INFO\", \"line_start\": 14, \"line_end\": 14, \"raw_text\": \"2026-03-10 15:44:06.533 [main] INFO  org.hibernate.Version - HHH000412: Hibernate ORM core version 6.6.33.Final\", \"score\": 0.0323, \"matche"
+   }
+  ],
+  "model_calls": 2,
+  "attempts": 1,
+  "seconds": 1.4,
+  "checks": {
+   "tools_order": true,
+   "model_calls": true,
+   "budget": true,
+   "answer_has": true,
+   "cites": true,
+   "passed": true
+  }
+ }
+]

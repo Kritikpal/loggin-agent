@@ -1,0 +1,100 @@
+# Golden set for ADR-003 layers 1-3: does the agent answer hard, real-world developer questions correctly with few
+# model calls? Facts are from the same fixture sources as agent-golden.yaml (see its header for the event map).
+#
+# What each class exercises (kind: common or edge, as in agent-golden.yaml)
+#   multi_part     independent parts: layer 1 should batch their lookups into one turn
+#   why_chain      each lookup needs the last one's result: no batching, layer 3 digests the earlier results
+#   heavy_results  10 long stack traces in one result: the 4,000-character guard keeps the request small
+#   timeline       an IST time window turned into a UTC search
+#   baseline       one lookup: must not get slower or worse
+#
+# Fields (as in agent-golden.yaml, plus two)
+#   tools            tools that must be called; calls in the same turn may come back in any order
+#   max_model_calls  model turns that asked for tools, plus the final answer
+#   expect_batch     true: at least one turn must ask for 2 or more tools
+# Tokens per request and per question are read from the LangSmith trace, not scored here.
+
+version: 1
+
+cases:
+  - id: t1-boot-failure-and-pid
+    class: multi_part
+    kind: common
+    question: dev-auth-service won't boot. What's the root cause, and which PID was it running as?
+    tools: [search_logs]
+    max_model_calls: 3
+    expect_batch: true
+    answer_has: [["SPRING_DATASOURCE_URL", "jdbcUrl"], ["26512"]]
+    cites: {dev-auth-service: [158, 167, 2]}
+
+  - id: t2-error-count-and-user
+    class: multi_part
+    kind: common
+    question: Before I open a ticket - how many errors did wso2-carbon-0114 log, and which user do they point to?
+    tools: [summarize_logs, search_logs]
+    max_model_calls: 3
+    expect_batch: true
+    answer_has: [["18", "eighteen"], ["35eea954"]]
+
+  - id: t3-health-check-two-sources
+    class: multi_part
+    kind: common
+    question: >-
+      Quick health check: does wso2-carbon-0107 have any errors, and how long did WSO2 take to start up on
+      14 January?
+    tools: [summarize_logs, search_logs]
+    max_model_calls: 3
+    expect_batch: true
+    answer_has: [["no error", "0 error", "zero error", "none", "no ERROR"], ["288"]]
+    cites: {wso2-carbon-0114: [59]}
+
+  - id: t4-checkout-failure-and-other-errors
+    class: multi_part
+    kind: common
+    question: A customer's checkout failed on order ORD-99128. What went wrong, and are there other errors in demo-app?
+    tools: [search_logs, summarize_logs]
+    max_model_calls: 3
+    expect_batch: true
+    answer_has: [["NullPointerException", "null"], ["2", "two"]]
+    cites: {demo-app: [13, 14]}
+
+  - id: t5-jwt-filter-cause-chain
+    class: why_chain
+    kind: common
+    question: Why does jwtAuthFilter fail to load? Follow it down to the real cause.
+    tools: [search_logs]
+    max_model_calls: 4
+    expect_batch: false
+    answer_has: [["SPRING_DATASOURCE_URL", "jdbcUrl"]]
+    cites: {dev-auth-service: [159, 158, 167]}
+
+  - id: t6-all-errors-common-cause
+    class: heavy_results
+    kind: edge
+    question: Show me every error in wso2-carbon-0114 and tell me what they have in common.
+    tools: [search_logs]
+    max_model_calls: 3
+    expect_batch: false
+    answer_has: [["UserNotFound", "user not found", "does not exist"], ["35eea954"]]
+    cites: {wso2-carbon-0114: [63, 170, 270, 378, 478, 585, 686, 793, 892, 999, 1098, 1205, 1304, 1411, 1510, 1616, 1714, 1820]}
+
+  - id: t7-incident-window-ist
+    class: timeline
+    kind: edge
+    question: We had an incident on WSO2 on 14 January around 14:20 IST. What happened?
+    tools: [search_logs]
+    max_model_calls: 4
+    expect_batch: false
+    answer_has: [["UserNotFound", "user not found", "does not exist"], ["14:21", "08:51"]]
+    cites: {wso2-carbon-0114: [270, 378, 478, 585]}
+    note: 14:20 IST is 08:50 UTC; the errors at 08:51:01-08:51:38 UTC (L270 L378 L478 L585) are the incident.
+
+  - id: t8-java-version
+    class: baseline
+    kind: common
+    question: What Java version is dev-auth-service running on?
+    tools: [search_logs]
+    max_model_calls: 2
+    expect_batch: false
+    answer_has: [["17.0.15"]]
+    cites: {dev-auth-service: [2]}

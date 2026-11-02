@@ -1,7 +1,9 @@
 """Rule-based scoring of one agent run against one golden case (tests/fixtures/agent-golden.yaml). No model calls.
 
 Each check is present only when the case asks for it, except `budget`, which every run must pass:
-    tools_order      every tool in `tools` was called, first calls in that order (an empty list requires nothing)
+    tools_order      every tool in `tools` was called, first calls in that order by turn (an empty list requires nothing)
+    model_calls      at most `max_model_calls` model calls: turns that asked for tools, plus the final answer
+    batched          with `expect_batch`, one turn asked for 2 or more tools (ADR-003 layer 1)
     forbidden_tools  no tool in `forbid` was called, not even a call the budget refused
     budget           the model tried at most 3 searches and 2 summaries (a refused call still counts as trying)
     answer_has       each fact appears, in any of its spellings, case-insensitive
@@ -21,9 +23,15 @@ _PLAIN = str.maketrans({**dict.fromkeys(map(ord, "‐‑‒–—−"), "-"),
 
 def score(case: Mapping, answer: str, tool_calls: Sequence[Mapping]) -> dict[str, bool]:
     names = [call["name"] for call in tool_calls]
+    # the model turn that asked for each call; results saved before turns were recorded count one call per turn
+    turns = [call.get("turn", n) for n, call in enumerate(tool_calls, 1)]
     answer = answer.translate(_PLAIN)
     text = answer.casefold()
-    checks = {"tools_order": _in_order(case.get("tools", []), names)}
+    checks = {"tools_order": _in_order(case.get("tools", []), names, turns)}
+    if case.get("max_model_calls"):
+        checks["model_calls"] = len(set(turns)) + 1 <= case["max_model_calls"]  # + 1: the final answer
+    if case.get("expect_batch"):
+        checks["batched"] = max(Counter(turns).values(), default=0) >= 2
     if case.get("forbid"):
         checks["forbidden_tools"] = not set(case["forbid"]) & set(names)
     tried = Counter(names)
@@ -38,10 +46,11 @@ def score(case: Mapping, answer: str, tool_calls: Sequence[Mapping]) -> dict[str
     return {**checks, "passed": all(checks.values())}
 
 
-def _in_order(required: Sequence[str], names: Sequence[str]) -> bool:
+def _in_order(required: Sequence[str], names: Sequence[str], turns: Sequence[int]) -> bool:
+    """Compared by turn, so tools asked for together in one turn are in order whichever comes back first."""
     if not set(required) <= set(names):
         return False
-    firsts = [names.index(name) for name in required]
+    firsts = [turns[names.index(name)] for name in required]
     return firsts == sorted(firsts)
 
 

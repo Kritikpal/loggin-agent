@@ -1,9 +1,10 @@
 """Run the agent golden set (tests/fixtures/agent-golden.yaml) against the real model and the indexed database.
 
-    uv run python -m scripts.eval_agent                     all cases; results to docs/agent-eval-golden-<time>.json
+    uv run python -m scripts.eval_agent                     all cases; results to docs/<golden file>-eval-<time>.json
     uv run python -m scripts.eval_agent --smoke             the smoke set: 2 cases per class, after a prompt change
     uv run python -m scripts.eval_agent --only s1-dev-auth-error-count,q2-identifier-hibernate-code
     uv run python -m scripts.eval_agent --class no_tool
+    uv run python -m scripts.eval_agent --golden tests/fixtures/agent-tokens-golden.yaml   the ADR-003 token set
     uv run python -m scripts.eval_agent --langsmith         also record an experiment in LangSmith
 
 Needs the four fixture sources from sources.yaml indexed (scripts/index_logs.py). The two setups need no database
@@ -78,16 +79,20 @@ async def run_case(case: dict, base: tuple[Source, ...], workdir: Path) -> dict:
                 return {"answer": "", "tool_calls": [], "error": error, "attempts": attempt}
             await asyncio.sleep(RETRY_WAIT)
     calls = [
-        {"name": c.name, "args": c.args, "status": c.status, "result": (c.result or "")[:MAX_RESULT_CHARS]}
+        {"name": c.name, "turn": c.turn, "args": c.args, "status": c.status,
+         "result": (c.result or "")[:MAX_RESULT_CHARS]}
         for c in reply.tool_calls]
-    return {"answer": reply.answer, "tool_calls": calls, "attempts": attempt,
+    # every turn that asked for tools, plus the final answer; fewer model calls = fewer tokens (ADR-003)
+    model_calls = len({c.turn for c in reply.tool_calls}) + 1
+    return {"answer": reply.answer, "tool_calls": calls, "model_calls": model_calls, "attempts": attempt,
             "seconds": round(time.monotonic() - started, 1)}
 
 
 def record(case: dict, outputs: dict) -> dict:
     checks = score(case, outputs["answer"], outputs["tool_calls"])
     failed = [name for name, ok in checks.items() if not ok and name != "passed"]
-    print(f"{'PASS' if checks['passed'] else 'FAIL'}  {case['id']:<32} {', '.join(failed)}", flush=True)
+    calls = f"{len(outputs['tool_calls'])} tools / {outputs.get('model_calls', '?')} model calls"
+    print(f"{'PASS' if checks['passed'] else 'FAIL'}  {case['id']:<32} {calls:<26} {', '.join(failed)}", flush=True)
     return {"id": case["id"], "class": case["class"], "kind": case["kind"], "question": case["question"],
             **outputs, "checks": checks}
 
@@ -101,13 +106,13 @@ async def run_local(cases: Sequence[dict], pause: float, workdir: Path) -> list[
     return results
 
 
-async def run_langsmith(cases: Sequence[dict], all_cases: Sequence[dict], version: int, pause: float,
+async def run_langsmith(cases: Sequence[dict], all_cases: Sequence[dict], name: str, pause: float,
                         workdir: Path) -> list[dict]:
     from langsmith import Client, aevaluate
 
-    client, name = Client(), f"agent-golden-v{version}"
+    client = Client()
     if not client.has_dataset(dataset_name=name):  # bump `version` in the YAML after editing cases
-        dataset = client.create_dataset(name, description=f"Agent golden set from {GOLDEN}")
+        dataset = client.create_dataset(name, description=f"Agent golden set {name}")
         client.create_examples(dataset_id=dataset.id, examples=[
             {"inputs": {"id": c["id"], "question": c["question"]}, "outputs": c,
              "metadata": {"class": c["class"], "kind": c["kind"]}} for c in all_cases])
@@ -127,7 +132,7 @@ async def run_langsmith(cases: Sequence[dict], all_cases: Sequence[dict], versio
         return {"results": [{"key": key, "score": int(ok)} for key, ok in result.items()]}
 
     await aevaluate(target, data=examples, evaluators=[checks], experiment_prefix="agent-golden", max_concurrency=1,
-                    metadata={"golden_version": version, "cases": len(examples)})
+                    metadata={"golden": name, "cases": len(examples)})
     return results
 
 
@@ -160,19 +165,21 @@ async def main() -> None:
     parser.add_argument("--only", help="comma-separated case ids")
     parser.add_argument("--class", dest="cls", help="run one class only")
     parser.add_argument("--smoke", action="store_true", help="only the smoke set (2 cases per class)")
+    parser.add_argument("--golden", type=Path, default=GOLDEN, help=f"golden set file (default {GOLDEN})")
     parser.add_argument("--pause", type=float, default=PAUSE, help="seconds between cases")
     parser.add_argument("--langsmith", action="store_true", help="record an experiment in LangSmith")
     parser.add_argument("--out", type=Path, help="results file (default docs/agent-eval-golden-<time>.json)")
     args = parser.parse_args()
 
-    golden = yaml.safe_load(GOLDEN.read_text(encoding="utf-8"))
+    golden = yaml.safe_load(args.golden.read_text(encoding="utf-8"))
+    name = f"{args.golden.stem}-v{golden['version']}"  # LangSmith dataset; bump `version` after editing cases
     cases = select(golden["cases"], args.only, args.cls, args.smoke)
     with tempfile.TemporaryDirectory() as tmp:
         if args.langsmith:
-            results = await run_langsmith(cases, golden["cases"], golden["version"], args.pause, Path(tmp))
+            results = await run_langsmith(cases, golden["cases"], name, args.pause, Path(tmp))
         else:
             results = await run_local(cases, args.pause, Path(tmp))
-    out = args.out or Path(f"docs/agent-eval-golden-{datetime.now():%Y%m%d-%H%M}.json")
+    out = args.out or Path(f"docs/{args.golden.stem}-eval-{datetime.now():%Y%m%d-%H%M}.json")
     out.write_text(json.dumps(results, indent=1, ensure_ascii=False, default=str), encoding="utf-8")
     report(results)
     print(f"results: {out}")

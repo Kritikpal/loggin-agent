@@ -1,0 +1,79 @@
+[
+ {
+  "id": "t1-boot-failure-and-pid",
+  "class": "multi_part",
+  "kind": "common",
+  "question": "dev-auth-service won't boot. What's the root cause, and which PID was it running as?",
+  "answer": "**Root cause**\n\nThe startup fails because Spring cannot create the JPA `EntityManagerFactory`.  \nThe log shows:\n\n* `ERROR o.s.o.j.LocalContainerEntityManagerFactoryBean – Failed to initialize JPA EntityManagerFactory … Unable to build Hibernate SessionFactory; nested exception is java.lang.RuntimeException: **Driver org.postgresql.Driver claims to not accept jdbcUrl, ${SPRING_DATASOURCE_URL}**`【dev-auth-service L158】  \n* This cascades into an `UnsatisfiedDependencyException` when creating the `jwtAuthFilter` bean (`jwtService` cannot be wired)【dev-auth-service L159】.\n\nThe underlying problem is that the placeholder `${SPRING_DATASOURCE_URL}` is not resolved – the datasource URL (or the `SPRING_DATASOURCE_URL` environment/property) is missing or malformed, so the PostgreSQL driver refuses to start.\n\n**PID**\n\nThe process started with PID **26512** (shown in the startup line)【dev-auth-service L2】.\n\n**What to check**\n\n* Verify that `SPRING_DATASOURCE_URL` (and any related DB credentials) is set correctly in the environment or `application‑*.yml`.  \n* Ensure the PostgreSQL driver can accept the provided JDBC URL.  \n\nFixing the datasource configuration should allow the `EntityManagerFactory` to start, which will resolve the bean‑creation error and let the service boot.",
+  "tool_calls": [
+   {
+    "name": "summarize_logs",
+    "turn": 1,
+    "args": {
+     "end_time": null,
+     "levels": null,
+     "source_ids": [
+      "dev-auth-service"
+     ],
+     "start_time": null
+    },
+    "status": "success",
+    "result": "{\"groups\": [{\"source_id\": \"dev-auth-service\", \"level\": \"INFO\", \"count\": 22, \"first_at\": \"2026-03-10T10:14:03.758000Z\", \"last_at\": \"2026-03-10T10:14:08.206000Z\"}, {\"source_id\": \"dev-auth-service\", \"level\": \"WARN\", \"count\": 5, \"first_at\": \"2026-03-10T10:14:06.923000Z\", \"last_at\": \"2026-03-10T10:14:08."
+   },
+   {
+    "name": "search_logs",
+    "turn": 2,
+    "args": {
+     "levels": [
+      "ERROR"
+     ],
+     "query": "ERROR",
+     "source_ids": [
+      "dev-auth-service"
+     ],
+     "top_k": 10
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"source_id\": \"dev-auth-service\", \"occurred_at\": \"2026-03-10T10:14:08.170000+00:00\", \"level\": \"ERROR\", \"line_start\": 159, \"line_end\": 159, \"raw_text\": \"2026-03-10 15:44:08.170 [main] ERROR o.s.b.w.e.tomcat.TomcatStarter - Error starting Tomcat context. Exception: org.springframework.bea"
+   },
+   {
+    "name": "search_logs",
+    "turn": 3,
+    "args": {
+     "query": "PID",
+     "source_ids": [
+      "dev-auth-service"
+     ],
+     "top_k": 10
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"source_id\": \"dev-auth-service\", \"occurred_at\": \"2026-03-10T10:14:03.842000+00:00\", \"level\": \"INFO\", \"line_start\": 2, \"line_end\": 2, \"raw_text\": \"2026-03-10 15:44:03.842 [main] INFO  c.t.smrd.AuthServiceApplication - Starting AuthServiceApplication using Java 17.0.15 with PID 26512 (D:"
+   },
+   {
+    "name": "search_logs",
+    "turn": 4,
+    "args": {
+     "query": "UnsatisfiedDependencyException",
+     "source_ids": [
+      "dev-auth-service"
+     ],
+     "top_k": 10
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"source_id\": \"dev-auth-service\", \"occurred_at\": \"2026-03-10T10:14:08.170000+00:00\", \"level\": \"ERROR\", \"line_start\": 159, \"line_end\": 159, \"raw_text\": \"2026-03-10 15:44:08.170 [main] ERROR o.s.b.w.e.tomcat.TomcatStarter - Error starting Tomcat context. Exception: org.springframework.bea"
+   }
+  ],
+  "model_calls": 5,
+  "attempts": 1,
+  "seconds": 37.3,
+  "checks": {
+   "tools_order": true,
+   "model_calls": false,
+   "batched": false,
+   "budget": true,
+   "answer_has": true,
+   "cites": true,
+   "passed": false
+  }
+ }
+]
