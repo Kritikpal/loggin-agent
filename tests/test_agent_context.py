@@ -4,8 +4,8 @@ import json
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from app.agent.context import DigestSeenResults, FIRST_LINE_MAX, LAST_LINE_MAX
-from tests.search_helpers import DEV_AUTH_LOG
+from app.agent.context import DigestSeenResults, FIRST_LINE_MAX, LAST_LINE_MAX, shorten_event
+from tests.search_helpers import DEV_AUTH_LOG, FIXTURES
 
 TRACE = "java.lang.RuntimeException: Driver claims to not accept jdbcUrl " + "\tat frame\n" * 200 + "Caused by: ROOT"
 
@@ -108,3 +108,35 @@ def test_a_stack_trace_keeps_its_first_line_and_its_last_caused_by_not_the_frame
     assert text.startswith("org.example.BootException: Error creating bean jwtAuthFilter")
     assert text.endswith("Caused by: java.lang.RuntimeException: Driver claims to not accept jdbcUrl, ${SPRING_DATASOURCE_URL}")
     assert "at a.b" not in text and "40 more" not in text
+
+
+# ---- shorten_event: one line-based rule for fresh search hits and for digests
+
+def fixture_event(name: str, first: int, last: int) -> str:
+    return "\n".join((FIXTURES / name).read_text(encoding="utf-8").splitlines()[first - 1:last])
+
+
+def test_a_long_first_line_is_kept_whole_with_the_root_cause_so_the_user_id_survives():
+    # eval t2/t6: cutting by characters dropped "User 35eea954" (char 334 of a 417-char first line) and the Caused by
+    event = fixture_event("wso2carbon-01-14-2026.1.log", 63, 169)
+
+    text = shorten_event(event, first_max=450, cause_max=200)
+
+    first, cause = text.split("\n[...]\n")
+    assert "UserNotFound: User 35eea954" in first
+    assert cause.startswith("Caused by: org.wso2.carbon.user.core.UserStoreException: 30007 - UserNotFound")
+    assert "\tat " not in text and len(text) <= 450 + 200 + 20
+
+
+def test_a_message_on_the_lines_after_an_empty_first_line_is_kept():
+    banner = fixture_event("wso2carbon-01-07-2026.1.log", 28, 34)
+
+    text = shorten_event(banner, first_max=450, cause_max=200)
+
+    assert "Internal authentication is utilizing default credentials" in text
+
+
+def test_a_short_event_comes_back_unchanged():
+    line = "2026-03-10 15:44:03.842 [main] INFO  Starting AuthServiceApplication using Java 17.0.15 with PID 26512"
+
+    assert shorten_event(line, first_max=450, cause_max=200) == line

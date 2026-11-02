@@ -14,6 +14,7 @@ from collections.abc import Callable
 from langchain_core.tools import StructuredTool
 from pydantic import Field, ValidationError
 
+from app.agent.context import shorten_event
 from app.controllers.dependencies import get_sources
 from app.core.database import SessionLocal
 from app.core.embeddings import embed_query
@@ -35,17 +36,19 @@ MAX_TOP_K = 5  # hits shown for a search without a level filter, whatever top_k 
 # traces plus the prompt made one request of 9,100 tokens, over Groq's 8,000 tokens a minute, and it can never run.
 MAX_TOP_K_FILTERED = 10
 FILTER_ONLY_QUERY = "error"  # stands in when the model searches by filter alone; the filters do the narrowing
-MAX_RAW_TEXT = 800  # characters of one event shown to the model
-# Characters of log text in one search result, shared by its hits (10 hits get 400 each). With batched calls
-# (ADR-003) three heavy results can land in one request; this keeps them at ~3,000 tokens, under Groq's 8,000.
+MAX_RAW_TEXT = 800  # characters of one event's message shown to the model
+# Characters of message in one search result, shared by its hits. Events are cut by lines (app.agent.context
+# shorten_event): the message, then a stack trace's last "Caused by". 10 hits stay under ~1,600 tokens (ADR-003).
 MAX_RESULT_TEXT = 4000
+MIN_MESSAGE = 450  # never less: a WSO2 error line is 417 characters and its user id sits at character 334
+MAX_CAUSE = 200  # the root cause line
 
 # Sent with every model call (ADR-003 layer 2), so it holds only how to fill the arguments; the search strategy, time
 # zones, relevance and coverage rules live in the system prompt.
 DESCRIPTION = """\
 Search the indexed logs (read-only). Returns events (source_id, line, time, level, raw_text, matched_by) and `coverage`.
-Long events are cut to start and end ("chars omitted"). At most 5 hits, 10 with `levels`: a sample, so never count hits
-for "how many" (summarize_logs counts). `query`: an identifier alone, plain words, or both; no quotes or operators;
+Long events keep their message and last "Caused by"; frames become "[...]". At most 5 hits, 10 with `levels`: a
+sample, so never count hits for "how many" (summarize_logs counts). `query`: an identifier alone, plain words, or both; no quotes or operators;
 "error" with `levels` lists by severity. `source_ids` only when the user named the source. Scores are rank-based: never
 compare them across searches."""
 
@@ -137,7 +140,8 @@ def _group(row) -> dict:
 def _compact(response: SearchLogsResponse, note: str | None = None) -> str:
     """The response as the model needs it: what, where and when, without ids, byte offsets or file paths. A stack
     trace can be 20,000 characters, and the model is billed (and rate limited) for every one of them."""
-    per_hit = min(MAX_RAW_TEXT, MAX_RESULT_TEXT // max(len(response.results), 1))
+    # 5 hits get 800 characters of message each, 10 hits 450; plus each trace's root cause
+    message_max = max(MIN_MESSAGE, min(MAX_RAW_TEXT, MAX_RESULT_TEXT // max(len(response.results), 1)))
     hits = [
         {
             "source_id": hit.source_id,
@@ -145,7 +149,7 @@ def _compact(response: SearchLogsResponse, note: str | None = None) -> str:
             "level": hit.level,
             "line_start": hit.locator.get("line_start"),
             "line_end": hit.locator.get("line_end"),
-            "raw_text": _shorten(hit.raw_text, per_hit),
+            "raw_text": shorten_event(hit.raw_text, first_max=message_max, cause_max=MAX_CAUSE),
             "score": round(hit.score, 4),
             "matched_by": hit.matched_by,
         }
@@ -153,14 +157,6 @@ def _compact(response: SearchLogsResponse, note: str | None = None) -> str:
     ]
     shown = {"results": hits, "coverage": [c.model_dump(mode="json") for c in response.coverage]}
     return json.dumps({**shown, "note": note} if note else shown)
-
-
-def _shorten(text: str, limit: int = MAX_RAW_TEXT) -> str:
-    """Keep the start and the end: a trace's cause ("Caused by: ...") is at the bottom."""
-    if len(text) <= limit:
-        return text
-    head, tail = limit * 2 // 3, limit // 3
-    return f"{text[:head]}\n[... {len(text) - head - tail} chars omitted ...]\n{text[-tail:]}"
 
 
 def _error(message: str) -> str:

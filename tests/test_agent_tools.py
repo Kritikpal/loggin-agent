@@ -51,7 +51,7 @@ async def test_a_search_returns_hits_with_lines_and_coverage(session_factory, tm
 
 
 @pytest.mark.integration
-async def test_a_huge_event_is_shortened_to_its_head_and_tail_and_ids_are_dropped(session_factory, tmp_path):
+async def test_a_huge_event_keeps_its_message_and_root_cause_and_ids_are_dropped(session_factory, tmp_path):
     source = dev_auth_source(copy_fixture(DEV_AUTH_LOG, tmp_path))
     trace = "HEADMARK java.lang.Error\n" + "\tat frame\n" * 5000 + "Caused by: TAILMARK"
     await insert_rows(session_factory, DEV_AUTH_ID, [
@@ -62,7 +62,7 @@ async def test_a_huge_event_is_shortened_to_its_head_and_tail_and_ids_are_droppe
     (hit,) = result["results"]
     assert len(hit["raw_text"]) < 1000 < len(trace)
     assert "HEADMARK" in hit["raw_text"] and "Caused by: TAILMARK" in hit["raw_text"]
-    assert "chars omitted" in hit["raw_text"]
+    assert "[...]" in hit["raw_text"] and "at frame" not in hit["raw_text"]
     assert set(hit) == {"source_id", "occurred_at", "level", "line_start", "line_end", "raw_text", "score", "matched_by"}
 
 
@@ -161,28 +161,31 @@ def hits_response(count: int, chars: int):
 
     hit = dict(source_id="s", occurred_at=None, level="ERROR", locator={"line_start": 1, "line_end": 2},
                score=0.5, matched_by=["keyword"])
-    results = [SearchHit(event_id=uuid.uuid4(), raw_text=f"HEAD{n} " + "x" * chars + f" TAIL{n}", **hit)
-               for n in range(count)]
+    trace = "\n\tat a.b(C.java:1)" * 100  # a stack trace: message line, frames, root cause
+    results = [SearchHit(event_id=uuid.uuid4(), raw_text=f"HEAD{n} " + "x" * chars + trace + f"\nCaused by: TAIL{n}",
+                         **hit) for n in range(count)]
     return SearchLogsResponse(results=results, coverage=[])
 
 
 def test_many_long_hits_share_one_text_budget_so_a_batched_turn_stays_under_the_token_limit():
     # ADR-003: three batched searches of 10 stack traces at 800 chars each made one request of ~11,000 tokens
-    from app.agent.tools import MAX_RESULT_TEXT, _compact
+    from app.agent.tools import MAX_CAUSE, MIN_MESSAGE, _compact
 
     hits = json.loads(_compact(hits_response(10, 3000)))["results"]
 
     shown = sum(len(hit["raw_text"]) for hit in hits)
-    assert shown <= MAX_RESULT_TEXT + 10 * 40  # 40: the "chars omitted" marker of each shortened hit
-    assert all(f"HEAD{n}" in hit["raw_text"] and f"TAIL{n}" in hit["raw_text"] for n, hit in enumerate(hits))
+    assert shown <= 10 * (MIN_MESSAGE + MAX_CAUSE + 20)  # ~6,700 chars, ~1,700 tokens: far below Groq's 8,000
+    assert all(hit["raw_text"].startswith(f"HEAD{n}") and hit["raw_text"].endswith(f"Caused by: TAIL{n}")
+               for n, hit in enumerate(hits))
 
 
-def test_a_few_hits_keep_the_full_per_event_length():
+def test_a_few_hits_keep_a_longer_message():
+    from app.agent.context import OMITTED
     from app.agent.tools import MAX_RAW_TEXT, _compact
 
     hits = json.loads(_compact(hits_response(5, 3000)))["results"]
 
-    assert all(MAX_RAW_TEXT <= len(hit["raw_text"]) <= MAX_RAW_TEXT + 40 for hit in hits)
+    assert all(MAX_RAW_TEXT <= len(hit["raw_text"].split(OMITTED)[0]) <= MAX_RAW_TEXT + 10 for hit in hits)
 
 
 def test_both_tool_definitions_stay_small_because_every_model_call_resends_them():
