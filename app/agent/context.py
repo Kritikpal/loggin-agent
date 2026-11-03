@@ -1,59 +1,43 @@
 """What the model sees of earlier tool results (ADR-003 layer 3).
 
-Every model call re-sends the whole conversation, so a search result read three turns ago is paid for again on each
-later call. Before each call, search results from earlier turns are replaced with a digest: per hit the citation
-fields (source, time, level, lines), the first line and a stack trace's last "Caused by". The latest turn's results,
-which the model has not read yet, are sent in full. Only the copy sent to the model changes; the agent's state, the API response and the
-coverage note keep the full results.
+Every model call re-sends the whole conversation, so a result read three turns ago is paid for again on each later
+call. Before each call, results from earlier turns are replaced with each tool's digest (app.agent.registry: find rows
+keep time, line, sig and some text; search rows keep lines whole up to 300 characters; overview keeps counts and
+citations). The latest turn's results, which the model has not read yet, are sent in full. Only the copy sent to the
+model changes; the agent's state, the API response and the coverage note keep the full results.
 """
 
-import json
 import re
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 
 from langchain_core.messages import AIMessage, AnyMessage, BaseMessage, ToolMessage
 
 FIRST_LINE_MAX = 300  # a log line's message, kept whole up to here; most lines are 100-250 characters
 LAST_LINE_MAX = 150  # the last "Caused by:" line of a stack trace
-DIGEST_NOTE = "earlier result, shortened to save tokens; its lines can still be cited, search again for full text"
 OMITTED = "\n[...]\n"  # where shorten_event dropped lines
 _NOT_MESSAGE = re.compile(r"(at |\.\.\. \d+ more|Caused by:|Suppressed:)")  # stack frames end a message
+
+Digest = Callable[[str], str | None]
 
 
 @dataclass(frozen=True)
 class DigestSeenResults:
-    """A ContextEdit for LangChain's ContextEditingMiddleware."""
+    """A ContextEdit for LangChain's ContextEditingMiddleware. `digests`: tool name -> its digest (app.agent.registry);
+    a tool without one is sent as it is."""
 
-    tools: tuple[str, ...] = ("search_logs",)  # summaries are already small and their counts are the answer
+    digests: Mapping[str, Digest] = field(default_factory=dict)
 
     def apply(self, messages: list[AnyMessage], *, count_tokens: Callable[[Sequence[BaseMessage]], int]) -> None:
         latest_turn = max(
             (i for i, m in enumerate(messages) if isinstance(m, AIMessage) and m.tool_calls), default=-1)
         for i in range(latest_turn):
             message = messages[i]
-            if isinstance(message, ToolMessage) and message.name in self.tools:
-                digest = _digest(message.content if isinstance(message.content, str) else "")
-                if digest is not None:
-                    messages[i] = message.model_copy(update={"content": digest})
-
-
-def _digest(content: str) -> str | None:
-    """None when there is nothing to shorten: an error, a non-JSON result, or one that is already a digest."""
-    try:
-        data = json.loads(content)
-    except ValueError:
-        return None
-    if not isinstance(data, dict) or "results" not in data or "digest" in data:
-        return None
-    # one line per hit: repeating JSON keys on every hit cost more than the shortened text itself
-    hits = [f"{h.get('file')} L{h.get('line_start')}-{h.get('line_end')} {h.get('level')} {h.get('occurred_at')} | "
-            f"{_ends(str(h.get('raw_text', '')))}" for h in data["results"]]
-    return json.dumps({"digest": DIGEST_NOTE, "hits": hits, "coverage": data.get("coverage", {})})
-
-
-def _ends(text: str) -> str:
-    return shorten_event(text, first_max=FIRST_LINE_MAX, cause_max=LAST_LINE_MAX)
+            digest = self.digests.get(message.name) if isinstance(message, ToolMessage) else None
+            if digest is not None:
+                shortened = digest(message.content if isinstance(message.content, str) else "")
+                if shortened is not None:
+                    messages[i] = message.model_copy(update={"content": shortened})
 
 
 def shorten_event(text: str, *, first_max: int, cause_max: int) -> str:

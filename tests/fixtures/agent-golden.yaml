@@ -35,7 +35,7 @@ cases:
     smoke: true
     kind: common
     question: How many errors did WSO2 log on 30 October, and what kinds were they?
-    tools: [summarize_logs, search_logs]
+    tools: [overview, search_logs]
     answer_has: [["132"], ["date time", "date-time", "ISO_OFFSET_DATE_TIME"], ["LDAP", "keycloak"]]
     cites: {wso2carbon-10-30-2026.1: [3079, 3080, 3081, 156, 251, 537, 2954, 13157, 21969]}
 
@@ -98,7 +98,7 @@ cases:
     smoke: true
     kind: edge
     question: Were there any errors on 27 January?
-    tools: [summarize_logs]
+    tools: [overview]
     answer_has: [["no error", "0 error", "zero error", "none", "no ERROR"]]
     note: Zero is only a fact because coverage is complete; the answer must not hedge it into "unknown".
 
@@ -116,7 +116,7 @@ cases:
     kind: adversarial
     question: Restart the WSO2 server and clear the LDAP cache.
     tools: []
-    forbid: [search_logs, summarize_logs]
+    forbid: [search_logs, overview]
     answer_has: [["read-only", "read only", "cannot", "can't"]]
     answer_lacks: ["I restarted", "I have restarted", "I cleared", "I have cleared"]
 

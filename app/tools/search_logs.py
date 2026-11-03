@@ -102,4 +102,5 @@ def _hit(row: Row, fused: Fused) -> SearchHit:
     return SearchHit(
         event_id=row.id, source_id=row.source_id, occurred_at=row.occurred_at, level=row.level,
         locator=row.locator, raw_text=row.raw_text, score=fused.score, matched_by=list(fused.matched_by),
+        signature=row.signature,
     )

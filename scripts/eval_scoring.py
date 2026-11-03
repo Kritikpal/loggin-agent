@@ -5,7 +5,8 @@ Each check is present only when the case asks for it, except `budget`, which eve
     model_calls      at most `max_model_calls` model calls: turns that asked for tools, plus the final answer
     batched          with `expect_batch`, one turn asked for 2 or more tools (ADR-003 layer 1)
     forbidden_tools  no tool in `forbid` was called, not even a call the budget refused
-    budget           the model tried at most 3 searches and 2 summaries (a refused call still counts as trying)
+    budget           at most the registry budgets per tool were run: like app.agent.budget, a call with status
+                     "error" (refused, or a bad argument) did not run and does not count
     answer_has       each fact appears, in any of its spellings, case-insensitive
     answer_lacks     none of these texts appears, case-insensitive
     cites            at least one expected line number appears as a whole number ("L158", "line 158")
@@ -15,7 +16,8 @@ import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
 
-BUDGETS = {"search_logs": 3, "summarize_logs": 2}
+# app.agent.registry.TOOLS; copied, since importing the agent creates the database engine (needs DATABASE_URL)
+BUDGETS = {"overview": 1, "find": 2, "search_logs": 2}
 # Models write "dev‑auth‑service" with non-breaking hyphens and "15:44 IST" with narrow spaces; compare plain text.
 _PLAIN = str.maketrans({**dict.fromkeys(map(ord, "‐‑‒–—−"), "-"),
                         **dict.fromkeys(map(ord, "   "), " ")})
@@ -38,8 +40,8 @@ def score(case: Mapping, answer: str, tool_calls: Sequence[Mapping]) -> dict[str
         checks["batched"] = max(Counter(turns).values(), default=0) >= 2
     if case.get("forbid"):
         checks["forbidden_tools"] = not set(case["forbid"]) & set(names)
-    tried = Counter(names)
-    checks["budget"] = all(tried[name] <= limit for name, limit in BUDGETS.items())
+    ran = Counter(call["name"] for call in tool_calls if call.get("status") != "error")
+    checks["budget"] = all(ran[name] <= limit for name, limit in BUDGETS.items())
     if case.get("answer_has"):
         checks["answer_has"] = all(any(_contains(s, answer, text) for s in fact) for fact in case["answer_has"])
     if case.get("answer_lacks"):

@@ -13,9 +13,8 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
 
-from sqlalchemy import ColumnElement, Row, desc, func, literal_column, select, text
+from sqlalchemy import ColumnElement, Row, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.log_event import LogEvent
@@ -83,34 +82,6 @@ async def fetch_events(session: AsyncSession, ids: Sequence[uuid.UUID]) -> dict[
         return {}
     stmt = select(
         LogEvent.id, LogEvent.source_id, LogEvent.occurred_at, LogEvent.level, LogEvent.locator, LogEvent.raw_text,
+        LogEvent.signature,
     ).where(LogEvent.id.in_(list(ids)))
     return {row.id: row for row in (await session.execute(stmt)).all()}
-
-
-GroupBy = Literal["level", "day", "file"]
-
-
-async def group_counts(
-    session: AsyncSession, where: list[ColumnElement[bool]], limit: int, *, group_by: GroupBy, timezone: str,
-) -> list[Row]:
-    """Events per level, optionally split by day (in `timezone`) or by file, with the first and last event time.
-    Rows come largest first, so `limit` cuts the smallest groups. `key` is None, a 'YYYY-MM-DD' day or a source id."""
-    keys = {
-        "level": None,
-        "day": func.to_char(func.timezone(timezone, LogEvent.occurred_at), "YYYY-MM-DD"),
-        "file": LogEvent.source_id,
-    }
-    key = keys[group_by]
-    # GROUP BY 1: the day expression holds bound values, and repeating it would bind them twice (a different query)
-    grouping = [LogEvent.level] if key is None else [text("1"), LogEvent.level]
-    stmt = (
-        select(
-            (literal_column("NULL") if key is None else key).label("key"), LogEvent.level, func.count().label("count"),
-            func.min(LogEvent.occurred_at).label("first_at"), func.max(LogEvent.occurred_at).label("last_at"),
-        )
-        .where(*where)
-        .group_by(*grouping)
-        .order_by(desc("count"), *grouping)
-        .limit(limit)
-    )
-    return list((await session.execute(stmt)).all())

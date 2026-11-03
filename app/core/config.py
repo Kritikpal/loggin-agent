@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     groq_api_keys: list[str] = Field(default_factory=list)
     logs_root: Path = ROOT_DIR / "logs"  # one folder per project, each with a project.yaml; override with LOGS_ROOT
     groq_model: str = "openai/gpt-oss-120b"  # must support tool calling; override with GROQ_MODEL
+    groq_tokens_per_minute: int = 8000  # the pacer's limit (app.agent.pacer); Groq's free tier for gpt-oss-120b
     # a stable place for the downloaded model (the OS temp dir can be cleaned); override with EMBEDDING_CACHE_DIR
     embedding_cache_dir: Path = ROOT_DIR / ".cache" / "fastembed"
 

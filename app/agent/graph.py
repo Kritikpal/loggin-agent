@@ -1,25 +1,29 @@
-"""The investigation agent: one model, two read-only tools (search_logs, summarize_logs), looped by LangGraph's agent
-runtime.
+"""The investigation agent: one model and the read-only tools of app.agent.registry (overview, find, search_logs),
+looped by LangGraph's agent runtime.
 
-Each tool's budget (3 searches, 2 summaries) is enforced here, in code: a call past its budget is not run, the model is
-told so and must answer with what it has. The prompt asks for the same limits, but only this makes them certain.
+Each tool's budget, and the total, is enforced here in code (app.agent.budget): a call past its budget is not run, the
+model is told so and must answer with what it has. The prompt asks for the same limits, but only this makes them
+certain. The real model is also paced to Groq's tokens per minute (app.agent.pacer).
 """
 
-import json
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import ContextEditingMiddleware, ToolCallLimitMiddleware
+from langchain.agents.middleware import ContextEditingMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AnyMessage, ToolMessage
 from langchain_core.tools import BaseTool
 
+from app.agent.budget import REFUSED, ToolBudget
 from app.agent.context import DigestSeenResults
 from app.agent.leaks import RecoverLeakedToolCalls
+from app.agent.pacer import PaceModelCalls
 from app.agent.prompt import Spans, build_system_prompt
-from app.agent.tools import SEARCH_BUDGET, SUMMARY_BUDGET, make_search_logs_tool, make_summarize_logs_tool
+from app.agent.registry import BUDGETS, MAX_TOOL_CALLS, TOOLS
+from app.agent.rows import parse_coverage
 from app.core.errors import AIUnavailableError
 from app.core.llm import chat_model
 from app.ingestion.projects import Project
@@ -30,26 +34,22 @@ logger = logging.getLogger(__name__)
 Agent = Any  # the compiled LangGraph graph; its generic parameters add nothing here
 
 
-# tool name -> (calls allowed per question, singular, plural) for the budget middleware and the "not run" note
-BUDGETS = {"search_logs": (SEARCH_BUDGET, "search", "searches"), "summarize_logs": (SUMMARY_BUDGET, "summary", "summaries")}
-
-
 def build_agent(
-    *, model: BaseChatModel | None = None, tool: BaseTool | None = None, summary_tool: BaseTool | None = None,
-    project: Project, spans: Spans | None = None,
+    *, model: BaseChatModel | None = None, tools: Sequence[BaseTool] | None = None, project: Project,
+    spans: Spans | None = None,
 ) -> Agent:
-    """Build the agent. Everything defaults to the real thing; tests pass a scripted model and fake tools."""
-    files = project.files  # the tools can only ever load these: that keeps the chat inside its project
-    tools = [tool or make_search_logs_tool(project_id=project.id, load_sources=lambda: files),
-             summary_tool or make_summarize_logs_tool(project_id=project.id, load_sources=lambda: files)]
+    """Build the agent. Everything defaults to the real thing; tests pass a scripted model and fake tools. Only the
+    real model is paced: a scripted one costs no tokens and must not wait."""
+    tools = list(tools) if tools is not None else [spec.factory(project) for spec in TOOLS]
     return create_agent(
         model or chat_model(),
         tools,
         system_prompt=build_system_prompt(project, spans),
         middleware=[
-            *(ToolCallLimitMiddleware(tool_name=t.name, run_limit=BUDGETS[t.name][0]) for t in tools),
-            ContextEditingMiddleware(edits=[DigestSeenResults()]),  # ADR-003: earlier results go out as digests
+            ToolBudget(BUDGETS, MAX_TOOL_CALLS),
+            ContextEditingMiddleware(edits=[DigestSeenResults({s.name: s.digest for s in TOOLS})]),  # ADR-003
             RecoverLeakedToolCalls(),  # gpt-oss sometimes writes a tool call into its answer text
+            *([PaceModelCalls()] if model is None else []),
         ],
     )
 
@@ -87,13 +87,7 @@ def _coverage_note(tool_calls: list[ToolCall]) -> str:
     statuses: dict[str, str] = {}
     more = 0  # incomplete files the tool did not name (it names at most 10)
     for call in tool_calls:
-        try:
-            coverage = json.loads(call.result or "{}").get("coverage", {})
-        except (ValueError, AttributeError):
-            continue
-        if not isinstance(coverage, dict):
-            continue
-        # the tools' project coverage object: {"files": n, "indexed": k, "<status>": [file, ...], "more": m}
+        coverage = parse_coverage(call.result or "")  # every tool ends with the line app.agent.rows.coverage_line
         for status in COVERAGE_NOTES:
             for name in coverage.get(status, []):
                 statuses.setdefault(name, status)
@@ -107,15 +101,14 @@ def _coverage_note(tool_calls: list[ToolCall]) -> str:
 
 
 def _refused_note(tool_calls: list[ToolCall]) -> str:
-    """Said by the code, not the model: a search past the budget never ran, and a model will happily describe its
+    """Said by the code, not the model: a call past the budget never ran, and a model will happily describe its
     'result' anyway."""
-    notes = []
-    for name, (limit, one, many) in BUDGETS.items():
-        refused = sum(1 for call in tool_calls if call.name == name and call.status == "error")
-        if refused:
-            what = f"{one} was" if refused == 1 else f"{many} were"
-            notes.append(f"\n\n_Note: {refused} further {what} not run (limit of {limit} {many} per question)._")
-    return "".join(notes)
+    refused = sum(1 for call in tool_calls if (call.result or "").startswith(REFUSED))
+    if not refused:
+        return ""
+    what = "tool call was" if refused == 1 else "tool calls were"
+    limits = ", ".join(f"{name} {limit}" for name, limit in BUDGETS.items())
+    return f"\n\n_Note: {refused} further {what} not run (limits per question: {limits}; {MAX_TOOL_CALLS} in all)._"
 
 
 def _tool_calls(messages: list[AnyMessage]) -> list[ToolCall]:

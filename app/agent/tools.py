@@ -1,78 +1,64 @@
 # TODO: SECURITY — run llm-secure-patterns to apply LLM security patterns
-"""The investigation agent's tools: search_logs (find events) and summarize_logs (count them, ADR-002). Both are
-called in-process (no HTTP) with their collaborators injected, so tests can point them at the test database and a fake
-embedder.
+"""What the agent's tools share, and search_logs (events similar in meaning). overview and find live in
+app.agent.overview and app.agent.find; app.agent.registry lists all three with their budgets.
 
-Every failure is returned to the model as text instead of raised: it can fix a bad argument and retry, and the graph
-never crashes on a tool call. Unexpected errors are logged in full but reported to the model only in general terms.
+Tools are called in-process (no HTTP) with their collaborators injected, so tests can point them at the test database
+and a fake embedder. Every failure goes back to the model as text (`error: <what to fix>`) instead of being raised:
+it can fix a bad argument and retry, and the graph never crashes on a tool call. An argument error is a ToolException
+(status "error"), which the budget middleware does not count; unexpected errors are logged in full, reported in general
+terms, and do count, since the call ran.
 """
 
-import json
 import logging
 from collections.abc import Callable, Sequence
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Literal
+from zoneinfo import ZoneInfo
 
-from langchain_core.tools import StructuredTool
-from pydantic import Field, ValidationError
+from langchain_core.tools import StructuredTool, ToolException
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.agent.context import shorten_event
+from app.agent.rows import Row, assemble, coverage_line, event_rows, fit, row_text, short
 from app.core.database import SessionLocal
 from app.core.embeddings import embed_query
-from app.ingestion.coverage import coverage_for_all
 from app.ingestion.sources import Source
-from app.schemas.search_logs import (
-    LogFilters, SearchLogsRequest, SearchLogsResponse, SourceCoverage, TimeAndLevelFilters,
-)
-from app.tools.search_logs import search_logs, searched_sources
-from app.tools.search_queries import GroupBy, filters, group_counts
+from app.schemas.search_logs import SearchLogsRequest, SearchLogsResponse
+from app.tools.search_logs import search_logs
 
 logger = logging.getLogger(__name__)
 
-SEARCH_BUDGET = 3  # search_logs calls per question; the graph enforces it (app.agent.graph)
-# Groq's free tier allows 8,000 tokens a minute, and every search result is sent again with each later model call.
-# The model asked for top_k 10 on its own, which made three searches add up to 7,000+ tokens and hit HTTP 429.
-DEFAULT_TOP_K = 5  # the API default is 10
+# Most to least verbose. Aliases rank with their level, so a project logging WARNING or FATAL still filters right.
+LEVEL_RANKS = {"TRACE": 0, "DEBUG": 1, "INFO": 2, "WARN": 3, "WARNING": 3, "ERROR": 4, "SEVERE": 4, "FATAL": 5,
+               "CRITICAL": 5}
+Level = Literal["DEBUG", "INFO", "WARN", "ERROR"]
+TIME_HELP = "ISO 8601 with offset, e.g. 2026-10-30T18:35:00+05:30"
+
+# Groq's free tier allows 8,000 tokens a minute, and every result is sent again with each later model call.
+DEFAULT_TOP_K = 5
 MAX_TOP_K = 5  # hits shown for a search without a level filter, whatever top_k says
-# A level filter is how the model lists every ERROR or WARN, so it may see more. Not 20: twenty 800-char stack
-# traces plus the prompt made one request of 9,100 tokens, over Groq's 8,000 tokens a minute, and it can never run.
-MAX_TOP_K_FILTERED = 10
+MAX_TOP_K_FILTERED = 10  # a level filter is how the model lists every ERROR or WARN; 20 made one 9,100-token request
 FILTER_ONLY_QUERY = "error"  # stands in when the model searches by filter alone; the filters do the narrowing
-MAX_RAW_TEXT = 800  # characters of one event's message shown to the model
-# Characters of message in one search result, shared by its hits. Events are cut by lines (app.agent.context
-# shorten_event): the message, then a stack trace's last "Caused by". 10 hits stay under ~1,600 tokens (ADR-003).
-MAX_RESULT_TEXT = 4000
+MAX_RAW_TEXT = 800  # characters of one hit's message; 10 hits get 450 (ADR-003)
 MIN_MESSAGE = 450  # never less: a WSO2 error line is 417 characters and its user id sits at character 334
-MAX_CAUSE = 200  # the root cause line
+MAX_HIT_CAUSE = 200
+HITS_TEXT = 4000
 
-# Sent with every model call (ADR-003 layer 2), so it holds only what the system prompt does not: what the tool shows
-# and how to fill `query`. Strategy, time zones, relevance and coverage rules live in the system prompt (v2.0).
+# Sent with every model call (ADR-003 layer 2): only what the tool shows and how to fill `query`.
 DESCRIPTION = """\
-Find log events. Shows at most 5 hits, 10 with `levels`: a sample, so never count hits (summarize_logs counts). \
-`query`: an identifier, plain words or both; no quotes or operators. "error" with `levels` lists by severity. \
-"[...]" marks omitted stack frames. Scores rank hits within one search only."""
+Events similar in meaning, when the exact words are unknown. Shows at most 5 hits, 10 with `levels`: a sample, never \
+count them. `query`: an identifier, plain words or both; no quotes or operators. `by`: k keyword, s semantic match."""
 
 
-class AgentFilters(TimeAndLevelFilters):
-    """The filters with short, agent-only descriptions: they go out with every model call. There is no file filter:
-    every search covers the whole project; with one, the golden set scored lower and used more calls (spec §6.5)."""
+class SearchArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
-    start_time: datetime | None = Field(default=None, description="UTC ISO 8601, e.g. 2026-03-10T10:14:00Z")
-    end_time: datetime | None = Field(default=None, description="UTC ISO 8601")
-    levels: list[str] | None = Field(default=None, description="e.g. ERROR, WARN")
-
-
-class AgentSearchArgs(AgentFilters):
-    """The search arguments with a smaller default top_k, so the model gets (and pays for) fewer hits unless it asks."""
-
-    # No min_length: the provider rejects an empty query before our code runs, and the model sends one when it
-    # searches by level, time or file alone. run() swaps it for FILTER_ONLY_QUERY.
+    # No min_length: the provider rejects an empty query before our code runs; run() swaps it for FILTER_ONLY_QUERY.
     query: str = Field(max_length=2000, description="Search text")
     # No le: the provider rejects a too-large top_k before our code runs (HTTP 400, the whole question fails).
     top_k: int = Field(default=DEFAULT_TOP_K, ge=1)
-
-
-class SummaryArgs(AgentFilters):
-    group_by: GroupBy = "level"  # the enum already names the choices; a description would only cost tokens
+    start_time: datetime | None = Field(default=None, description=TIME_HELP)
+    end_time: datetime | None = Field(default=None, description=TIME_HELP)
+    levels: list[str] | None = Field(default=None, description="e.g. ERROR, WARN")
 
 
 def make_search_logs_tool(
@@ -86,126 +72,103 @@ def make_search_logs_tool(
     async def run(**arguments) -> str:
         requested = arguments.get("top_k", DEFAULT_TOP_K)
         cap = MAX_TOP_K_FILTERED if arguments.get("levels") else MAX_TOP_K
-        query = arguments["query"].strip() or FILTER_ONLY_QUERY
+        sources = load_sources()
+        start, end = time_window(arguments, sources)
         try:
-            sources = load_sources()
-            request = SearchLogsRequest(**_log_filters(arguments), query=query, top_k=min(requested, cap))
+            request = SearchLogsRequest(
+                query=arguments["query"].strip() or FILTER_ONLY_QUERY, top_k=min(requested, cap),
+                start_time=start, end_time=end, levels=arguments.get("levels"))
+        except ValidationError as exc:
+            raise ToolException(validation_text(exc)) from exc
+        try:
             async with session_factory() as session:
                 response = await search_logs(request, session, sources=sources, embed=embed)
         except Exception:
             logger.exception("search_logs tool failed")
-            return _error("search is temporarily unavailable")
-        note = f"Showing the top {cap} of the {requested} requested results." if requested > cap else None
-        return _compact(response, project_id, note)
+            return "error: search is temporarily unavailable"
+        note = f"showing the top {cap} of the {requested} requested hits" if requested > cap else None
+        return compact_hits(response, project_id, note, sources)
 
-    return StructuredTool.from_function(
-        coroutine=run, name="search_logs", description=DESCRIPTION, args_schema=AgentSearchArgs,
-        handle_validation_error=_validation_message,
-    )
+    return tool(run, "search_logs", DESCRIPTION, SearchArgs)
 
 
-SUMMARY_BUDGET = 2  # summarize_logs calls per question, separate from the search budget (app.agent.graph)
-MAX_GROUPS = 30  # rows shown, largest first; protects the token budget (ADR-003)
-MAX_LEVEL_CHARS = 16  # the level is parsed from untrusted log text: keep it a label, never a sentence
-MAX_COVERAGE_NAMES = 10  # file names listed in a coverage object; 30 daily files must not ride on every result
-
-# When to use it is in the system prompt ("# summarize_logs"); this says only what it returns.
-SUMMARY_DESCRIPTION = "Count events per level, day or file, with first and last times. No log text."
-
-
-def make_summarize_logs_tool(
-    *, project_id: str, load_sources: Callable[[], tuple[Source, ...]], session_factory: Callable = SessionLocal,
-) -> StructuredTool:
-    """`load_sources` must return only the project's files. Days are counted in the project's timezone."""
-    async def run(**arguments) -> str:
-        group_by = arguments.get("group_by", "level")
-        try:
-            sources = load_sources()
-            request = LogFilters(**_log_filters(arguments))
-            searched = searched_sources(request, sources)
-            timezone = sources[0].timezone if sources else "UTC"  # one project, one timezone
-            async with session_factory() as session:
-                where = filters(request, [s.id for s in searched])
-                rows = await group_counts(session, where, MAX_GROUPS + 1, group_by=group_by, timezone=timezone)
-                coverage = await coverage_for_all(session, searched)
-        except Exception:
-            logger.exception("summarize_logs tool failed")
-            return _error("summary is temporarily unavailable")
-        groups = [_group(row, group_by, project_id) for row in rows[:MAX_GROUPS]]
-        shown = {"groups": groups, "coverage": project_coverage(coverage, project_id)}
-        if len(rows) > MAX_GROUPS:
-            shown["note"] = f"Only the largest {MAX_GROUPS} groups are shown; narrow by time or level for the rest."
-        return json.dumps(shown)
-
-    return StructuredTool.from_function(
-        coroutine=run, name="summarize_logs", description=SUMMARY_DESCRIPTION, args_schema=SummaryArgs,
-        handle_validation_error=_validation_message,
-    )
-
-
-def project_coverage(coverage: Sequence[SourceCoverage], project_id: str) -> dict:
-    """One coverage object for the project instead of one entry per file (spec §6.3). Only files that are not
-    complete are named, at most MAX_COVERAGE_NAMES of them, grouped by status."""
-    shown: dict = {"files": len(coverage), "indexed": sum(c.status != "not_indexed" for c in coverage)}
-    more = 0
-    for item in coverage:
-        if item.status == "complete":
-            continue
-        if sum(len(v) for v in shown.values() if isinstance(v, list)) < MAX_COVERAGE_NAMES:
-            shown.setdefault(item.status, []).append(_short(item.source_id, project_id))
-        else:
-            more += 1
-    return {**shown, "more": more} if more else shown
-
-
-def _group(row, group_by: str, project_id: str) -> dict:
-    group = {
-        "level": row.level[:MAX_LEVEL_CHARS] if row.level else None, "count": row.count,
-        "first_at": row.first_at.isoformat() if row.first_at else None,
-        "last_at": row.last_at.isoformat() if row.last_at else None,
-    }
-    if group_by == "day":
-        return {"day": row.key, **group}
-    if group_by == "file":
-        return {"file": _short(row.key, project_id), **group}
-    return group
-
-
-def _log_filters(arguments: dict) -> dict:
-    """The agent's time and level arguments as LogFilters fields; the files are always all of the project's."""
-    return {key: arguments.get(key) for key in ("start_time", "end_time", "levels")}
-
-
-def _short(source_id: str, project_id: str) -> str:
-    return source_id.removeprefix(f"{project_id}/")
-
-
-def _compact(response: SearchLogsResponse, project_id: str, note: str | None = None) -> str:
-    """The response as the model needs it: what, where and when, without ids, byte offsets or file paths. A stack
-    trace can be 20,000 characters, and the model is billed (and rate limited) for every one of them."""
-    # 5 hits get 800 characters of message each, 10 hits 450; plus each trace's root cause
-    message_max = max(MIN_MESSAGE, min(MAX_RAW_TEXT, MAX_RESULT_TEXT // max(len(response.results), 1)))
-    hits = [
-        {
-            "file": _short(hit.source_id, project_id),
-            "occurred_at": hit.occurred_at.isoformat() if hit.occurred_at else None,
-            "level": hit.level,
-            "line_start": hit.locator.get("line_start"),
-            "line_end": hit.locator.get("line_end"),
-            "raw_text": shorten_event(hit.raw_text, first_max=message_max, cause_max=MAX_CAUSE),
-            "score": round(hit.score, 4),
-            "matched_by": hit.matched_by,
-        }
+def compact_hits(
+    response: SearchLogsResponse, project_id: str, note: str | None = None, sources: Sequence[Source] = (),
+) -> str:
+    """Hits as find-style rows plus their sig, so a good hit can be followed by find(sig=...). A stack trace can be
+    20,000 characters; each hit keeps its message (450-800 characters) and the last "Caused by"."""
+    by_id = {s.id: s for s in sources}
+    message_max = max(MIN_MESSAGE, min(MAX_RAW_TEXT, HITS_TEXT // max(len(response.results), 1)))
+    rows = [
+        Row(file=short(hit.source_id, project_id), occurred_at=hit.occurred_at, line=hit.locator.get("line_start"),
+            level=hit.level, sig=hit.signature, extra="".join(leg[0] for leg in hit.matched_by),
+            text=row_text(hit.raw_text, by_id.get(hit.source_id), limit=message_max, cause=MAX_HIT_CAUSE))
         for hit in response.results
     ]
-    shown = {"results": hits, "coverage": project_coverage(response.coverage, project_id)}
-    return json.dumps({**shown, "note": note} if note else shown)
+    header, lines = event_rows(rows, "time line level sig by text", total_label="hits", total=len(rows))
+    return assemble(header, lines, note, coverage_line(response.coverage, project_id))
 
 
-def _error(message: str) -> str:
-    return json.dumps({"error": message})
+# --- shared by the three tools ----------------------------------------------------------------------------------
 
 
-def _validation_message(exc: ValidationError) -> str:
+def tool(run: Callable, name: str, description: str, schema: type[BaseModel]) -> StructuredTool:
+    return StructuredTool.from_function(
+        coroutine=run, name=name, description=description, args_schema=schema,
+        handle_validation_error=lambda exc: f"error: {validation_text(exc)}",
+        handle_tool_error=lambda exc: f"error: {exc}",
+    )
+
+
+def project_timezone(sources: Sequence[Source]) -> str:
+    return sources[0].timezone if sources else "UTC"  # one project, one timezone
+
+
+def to_utc(at: datetime | None, timezone: str) -> datetime | None:
+    """A time with an offset is converted; one without is read in the project's timezone (spec: times in)."""
+    if at is None:
+        return None
+    return (at if at.tzinfo else at.replace(tzinfo=ZoneInfo(timezone))).astimezone(UTC)
+
+
+def time_window(arguments: dict, sources: Sequence[Source]) -> tuple[datetime | None, datetime | None]:
+    timezone = project_timezone(sources)
+    start, end = to_utc(arguments.get("start_time"), timezone), to_utc(arguments.get("end_time"), timezone)
+    if start and end and start > end:
+        raise ToolException("start_time must not be after end_time")
+    return start, end
+
+
+def levels_from(min_level: str | None, present: Sequence[str | None]) -> list[str] | None:
+    """The levels at or above `min_level` among those present; None = no filter."""
+    if min_level is None:
+        return None
+    floor = LEVEL_RANKS[min_level]
+    return [level for level in present if level and LEVEL_RANKS.get(level.upper(), floor) >= floor]
+
+
+def hidden_text(by_level: dict[str | None, int], shown: Sequence[str] | None) -> str:
+    """`hidden DEBUG 2754` for the levels a min_level left out, or `hidden none`."""
+    if shown is None:
+        return "hidden none"
+    hidden = [f"{level or 'unlevelled'} {n}" for level, n in sorted(
+        by_level.items(), key=lambda kv: -kv[1]) if level not in shown]
+    return "hidden " + (", ".join(hidden) if hidden else "none")
+
+
+def validation_text(exc: ValidationError) -> str:
     problems = "; ".join(f"{'.'.join(map(str, e['loc'])) or 'arguments'}: {e['msg']}" for e in exc.errors())
-    return _error(f"invalid search arguments: {problems}")
+    return f"invalid arguments: {problems}"
+
+
+def severity_sql(column: str = "level") -> str:
+    """LEVEL_RANKS as a SQL expression; a level it does not know ranks lowest. Built from constants only."""
+    cases = " ".join(f"when '{level}' then {rank}" for level, rank in LEVEL_RANKS.items())
+    return f"(case upper({column}) {cases} else -1 end)"
+
+
+def fitted(header: str, lines: list[str], note: str | None, coverage: str, *, what: str,
+           priority: Sequence[int] | None = None) -> str:
+    """The result, cut to MAX_RESULT_CHARS by dropping rows (lowest `priority` first); a cut is added to the note."""
+    kept, cut = fit(header, lines, [coverage, note or ""], what=what, priority=priority)
+    return assemble(header, kept, "; ".join(filter(None, [note, cut])) or None, coverage)

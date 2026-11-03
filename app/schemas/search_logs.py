@@ -28,7 +28,7 @@ class TimeAndLevelFilters(BaseModel):
 
 
 class LogFilters(TimeAndLevelFilters):
-    """The filters search_logs and summarize_logs share, so both tools always agree on what is in scope."""
+    """The filters of the search API and the search_logs tool."""
 
     source_ids: list[str] | None = Field(default=None, description="Restrict to these approved log sources")
 
@@ -51,6 +51,7 @@ class SearchHit(BaseModel):
     raw_text: str = Field(description="Redacted original event text")
     score: float = Field(description="Relevance after merging semantic and keyword ranking; higher is better")
     matched_by: list[Literal["semantic", "keyword"]]
+    signature: str | None = Field(default=None, description="Id of the event's kind; the same for every event of it")
 
 
 class SourceCoverage(BaseModel):

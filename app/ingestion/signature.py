@@ -22,6 +22,15 @@ _DAY = r"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)"
 _MONTH = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
 _VARIABLE = (  # applied in order: the specific shapes before the plain numbers they contain
     re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I),  # UUID
+    # ISO 8601 date-time as one value (2026-10-28T07:12:33.519Z, 2026-10-30 13:11:29,522); the number rule below
+    # would leave its day and the 'T' behind (<*>-<*>-28T07:<*>), so every timestamp made a kind of its own
+    re.compile(r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?(?!\d)"),
+    # Generated ids mixing letters and digits (PN4P287CA0072, NJ8JC3D3DS3K), with the dotted labels after them, so
+    # PN4P287CA0072.INDP287.PROD.OUTLOOK.COM is one value. "Two digit runs with letters between" keeps names with one
+    # digit run (x509Certificates, OAuth2AuthzEndpoint, HV000001, jdk17) and host names without digits. Pure hex is
+    # left to the hex rule, and only upper-case labels follow, so main.8a878677.chunk.js keeps its ".chunk.js".
+    # ponytail: a class name with two digit runs (Log4j2Config) is also replaced; refine if such a kind splits badly.
+    re.compile(r"\b(?![0-9a-f]+\b)(?=[A-Za-z0-9]*\d[A-Za-z]+\d)[A-Za-z0-9]{8,}\b(?:\.[A-Z0-9-]+\b)*", re.ASCII),
     re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b"),  # e-mail
     re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b"),  # IPv4 with optional port
     re.compile(rf"\b{_DAY} {_MONTH} +\d{{1,2}} \d{{1,2}}:\d{{2}}:\d{{2}}(?: [A-Z]{{2,5}})? \d{{4}}\b"),  # Fri May 29 19:29:22 IST 2026
