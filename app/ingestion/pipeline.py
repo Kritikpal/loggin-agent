@@ -31,6 +31,7 @@ from app.ingestion.readers.file_reader import FileReader
 from app.ingestion.redaction import redact
 from app.ingestion.semantic_text import MAX_TEXT_CHARS, build_semantic_text
 from app.ingestion.sources import FileSource, Source
+from app.ingestion.signature import event_signature
 from app.ingestion.store import EventRow, advance_state, load_cursor, record_error, upsert_events
 from app.models.log_event import LogEvent
 
@@ -139,16 +140,20 @@ async def _store_batch(
 def _prepare(event: SourceEvent, source: FileSource) -> EventRow:
     # Redaction first, and outside the guard: if it fails nothing may be stored, so the whole run fails instead.
     text = redact(event.event.text).text
-    base = EventRow(event.event_key, dict(event.locator), None, None, text, {}, text[:MAX_TEXT_CHARS])
+    unparsed = event_signature(level=None, logger=None, message=None, raw_text=text)
+    base = EventRow(event.event_key, dict(event.locator), None, None, text, {}, text[:MAX_TEXT_CHARS],
+                    signature=unparsed.sig, signature_template=unparsed.template)
     try:
         resolved = resolve(text, source)
         semantic = build_semantic_text(resolved.parsed, source.app_packages).text
+        parsed = resolved.parsed
+        kind = event_signature(level=parsed.level, logger=parsed.logger, message=parsed.message, raw_text=text)
     except Exception as exc:  # resolve never raises by contract; never drop the event if it does
         logger.warning("Storing an event of source %s unparsed: %s", source.id, type(exc).__name__)
         return base
     return replace(
-        base, occurred_at=resolved.occurred_at, level=resolved.parsed.level, fields=dict(resolved.fields),
-        semantic_text=semantic,
+        base, occurred_at=resolved.occurred_at, level=parsed.level, fields=dict(resolved.fields),
+        semantic_text=semantic, signature=kind.sig, signature_template=kind.template,
     )
 
 

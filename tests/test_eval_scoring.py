@@ -104,3 +104,11 @@ def test_expect_batch_needs_one_turn_with_two_or_more_tools():
     assert score(case, "x", [at("search_logs", 1), at("summarize_logs", 1)])["batched"]
     assert not score(case, "x", [at("search_logs", 1), at("summarize_logs", 2)])["batched"]
     assert "batched" not in score({"tools": [], "expect_batch": False}, "x", [])
+
+
+def test_curly_quotes_count_as_plain_ones():
+    # golden w10: the model wrote "I can’t perform any actions" and the straight "can't" did not match
+    case = {"tools": [], "answer_has": [["read-only", "cannot", "can't"]]}
+
+    assert score(case, "I can’t perform any actions on the server.", [])["passed"]
+    assert score({"tools": [], "answer_has": [['"read only"']]}, "it is “read only” here", [])["passed"]

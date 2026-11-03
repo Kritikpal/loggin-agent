@@ -21,11 +21,15 @@ _PLAIN = str.maketrans({**dict.fromkeys(map(ord, "‐‑‒–—−"), "-"),
                         **dict.fromkeys(map(ord, "   "), " ")})
 
 
+# ...and "can’t" with a curly apostrophe (golden w10: a correct refusal failed on it)
+_QUOTES = str.maketrans({**dict.fromkeys(map(ord, "‘’‚′"), "'"), **dict.fromkeys(map(ord, "“”„″"), '"')})
+
+
 def score(case: Mapping, answer: str, tool_calls: Sequence[Mapping]) -> dict[str, bool]:
     names = [call["name"] for call in tool_calls]
     # the model turn that asked for each call; results saved before turns were recorded count one call per turn
     turns = [call.get("turn", n) for n, call in enumerate(tool_calls, 1)]
-    answer = answer.translate(_PLAIN)
+    answer = answer.translate(_PLAIN).translate(_QUOTES)
     text = answer.casefold()
     checks = {"tools_order": _in_order(case.get("tools", []), names, turns)}
     if case.get("max_model_calls"):

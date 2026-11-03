@@ -19,6 +19,7 @@ class LogEvent(Base):
         UniqueConstraint("source_id", "event_key", name="uq_log_events_source_event"),
         Index("ix_log_events_source_time", "source_id", "occurred_at"),
         Index("ix_log_events_level_time", "level", "occurred_at"),
+        Index("ix_log_events_signature_time", "signature", "occurred_at"),
         Index("ix_log_events_search_tsv", "search_tsv", postgresql_using="gin"),
         Index(
             "ix_log_events_embedding", "embedding", postgresql_using="hnsw",
@@ -35,6 +36,8 @@ class LogEvent(Base):
     raw_text: Mapped[str] = mapped_column(Text, comment="Redacted original event text")
     fields: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"), comment="Redacted dynamic fields with provenance")
     semantic_text: Mapped[str] = mapped_column(Text, comment="Text that was embedded and keyword-indexed")
+    signature: Mapped[str | None] = mapped_column(Text, comment="Id of the event's kind (app.ingestion.signature)")
+    signature_template: Mapped[str | None] = mapped_column(Text, comment="The kind's text with variable parts as <*>")
     search_tsv: Mapped[Any] = mapped_column(
         TSVECTOR, Computed("to_tsvector('simple', semantic_text)", persisted=True)
     )

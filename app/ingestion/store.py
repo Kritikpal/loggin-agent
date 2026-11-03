@@ -26,7 +26,7 @@ from app.ingestion.readers.base import Cursor
 from app.models.log_event import LogEvent, SourceIndexState
 
 # Overwritten from the new row on conflict. search_tsv is GENERATED and never written; the vector has its own rule.
-_REPLACED = ("locator", "occurred_at", "level", "raw_text", "fields", "semantic_text")
+_REPLACED = ("locator", "occurred_at", "level", "raw_text", "fields", "semantic_text", "signature", "signature_template")
 
 
 @dataclass(frozen=True)
@@ -42,6 +42,8 @@ class EventRow:
     semantic_text: str
     embedding: list[float] | None = None  # None = not (yet) embedded
     embedding_model: str | None = None
+    signature: str | None = None  # the event's kind (app.ingestion.signature)
+    signature_template: str | None = None
 
 
 async def upsert_events(session: AsyncSession, source_id: str, rows: Sequence[EventRow]) -> None:
@@ -67,6 +69,7 @@ def _values(source_id: str, row: EventRow) -> dict[str, Any]:
         "source_id": source_id, "event_key": row.event_key, "locator": dict(row.locator),
         "occurred_at": row.occurred_at, "level": row.level, "raw_text": row.raw_text, "fields": dict(row.fields),
         "semantic_text": row.semantic_text, "embedding": row.embedding, "embedding_model": row.embedding_model,
+        "signature": row.signature, "signature_template": row.signature_template,
     }
 
 
