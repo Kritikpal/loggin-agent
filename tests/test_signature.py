@@ -97,3 +97,30 @@ def test_a_sig_is_eight_hex_characters_and_stable():
 
 def test_templates_are_capped():
     assert len(sig("word " * 200).template) <= 200
+
+
+def test_a_number_with_a_unit_glued_on_is_a_value():
+    # 11-01 L21: every duration made its own kind
+    a = sig("circuit breaker open duration: 172288623ms. retry in 30s, cache 512KB", "DEBUG", LDAP)
+    b = sig("circuit breaker open duration: 98ms. retry in 5s, cache 2MB", "DEBUG", LDAP)
+
+    assert a.sig == b.sig
+    assert a.template == "DEBUG {LDAPConnectionContext} - circuit breaker open duration: <*>. retry in <*>, cache <*>"
+
+
+def test_a_written_date_is_one_value():
+    # 11-01 L13: certificates expiring on different dates split into kinds
+    a = sig("certificate [ad-domain] is not valid due to [NotAfter: Fri May 29 19:29:22 IST 2026]", "WARN")
+    b = sig("certificate [ad-domain] is not valid due to [NotAfter: Tue Jan 5 08:00:00 UTC 2027]", "WARN")
+
+    assert a.sig == b.sig
+    assert a.template.endswith("is not valid due to [NotAfter: <*>]")
+
+
+def test_short_hex_ids_are_values_but_plain_words_are_not():
+    # 10-30 L22477 / L22496: each bundle hash made its own kind
+    a = sig("Could not handle request: /console/static/js/main.8a878677.chunk.js", logger=STARTED)
+    b = sig("Could not handle request: /console/static/js/main.4b3fb8cc.chunk.js", logger=STARTED)
+
+    assert a.sig == b.sig and "/js/main.<*>.chunk.js" in a.template
+    assert "deadbeef" in sig("cache deadbeef added").template  # hex letters but no digit: a word, kept

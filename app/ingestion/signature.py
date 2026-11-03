@@ -15,13 +15,17 @@ MAX_TEMPLATE = 200
 SIG_LENGTH = 8  # hex characters; thousands of kinds per project stay far from collisions
 PLACEHOLDER = "<*>"
 
+_DAY = r"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)"
+_MONTH = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
 _VARIABLE = (  # applied in order: the specific shapes before the plain numbers they contain
     re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I),  # UUID
     re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b"),  # e-mail
     re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b"),  # IPv4 with optional port
+    re.compile(rf"\b{_DAY} {_MONTH} +\d{{1,2}} \d{{1,2}}:\d{{2}}:\d{{2}}(?: [A-Z]{{2,5}})? \d{{4}}\b"),  # Fri May 29 19:29:22 IST 2026
     re.compile(r"'[^'\n]*'|\"[^\"\n]*\""),  # quoted values
-    re.compile(r"\b0x[0-9a-f]+\b|\b(?=[0-9a-f]*\d)[0-9a-f]{12,}\b", re.I),  # hex ids
+    re.compile(r"\b0x[0-9a-f]+\b|\b(?=[0-9a-f]*\d)[0-9a-f]{8,}\b", re.I),  # hex ids and bundle hashes (8a878677)
     re.compile(r"\w\*{2,}\w"),  # user names WSO2 masked itself (C*****k): the star count varies
+    re.compile(r"\b\d+(?:\.\d+)?(?:ms|s|sec|secs|min|h|b|kb|mb|gb)\b", re.I),  # 172288623ms, 30s, 512KB
     re.compile(r"\b\d+(?:[.,:]\d+)*\b"),  # numbers, times, durations
 )
 _EXCEPTION = re.compile(r"\b(?:[A-Za-z_$][\w$]*\.)+[A-Z][\w$]*(?:Exception|Error)\b")
