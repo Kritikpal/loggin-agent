@@ -1,0 +1,3 @@
+# Log files are data: keep their bytes exactly as committed. Converting line endings changes every event's byte
+# offset and fingerprint, so the indexer sees a replaced file and stores every event again.
+*.log -text
