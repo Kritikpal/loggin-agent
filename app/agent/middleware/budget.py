@@ -1,4 +1,4 @@
-"""Per-question tool budgets, enforced in code (app.agent.registry). The prompt asks for the same limits, but only this
+"""Per-question tool budgets, enforced in code (app.agent.tools). The prompt asks for the same limits, but only this
 makes them certain.
 
 Budgets count calls that ran, not calls requested. LangChain's ToolCallLimitMiddleware counts when the model asks, so a
@@ -31,12 +31,6 @@ class ToolBudget(AgentMiddleware):
     ) -> ToolMessage | Command:
         refusal = self._refusal(request)
         return refusal if refusal else await handler(request)
-
-    def wrap_tool_call(
-        self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], ToolMessage | Command],
-    ) -> ToolMessage | Command:
-        refusal = self._refusal(request)
-        return refusal if refusal else handler(request)
 
     def _refusal(self, request: ToolCallRequest) -> ToolMessage | None:
         """Counted from the results already in the state: a call ran when its result is not an error.

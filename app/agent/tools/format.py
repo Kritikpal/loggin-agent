@@ -7,11 +7,12 @@ only its text; the marker on its first line keeps it from being digested twice.
 """
 
 import re
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from app.agent.context import FIRST_LINE_MAX, LAST_LINE_MAX, OMITTED, shorten_event
+from langchain_core.messages import AIMessage, AnyMessage, BaseMessage, ToolMessage
+
 from app.ingestion.fields.resolver import resolve
 from app.ingestion.sources import SourceBase
 from app.schemas.search_logs import SourceCoverage
@@ -25,6 +26,10 @@ DIGEST_MARK = "(earlier result, shortened; rows can still be cited; fetch again 
 FIND_DIGEST_TEXT = 80  # find rows keep this much text: the sig re-fetches the rest
 OVERVIEW_DIGEST_TEMPLATE = 60
 # search rows keep lines whole up to FIRST_LINE_MAX: cutting shorter lost "PID 26512" and a user id at 334 (ADR-003)
+FIRST_LINE_MAX = 300  # a log line's message, kept whole up to here; most lines are 100-250 characters
+LAST_LINE_MAX = 150  # the last "Caused by:" line of a stack trace
+OMITTED = "\n[...]\n"  # where shorten_event dropped lines
+_NOT_MESSAGE = re.compile(r"(at |\.\.\. \d+ more|Caused by:|Suppressed:)")  # stack frames end a message
 _COVERAGE = re.compile(r"^files (\d+), indexed (\d+)(.*)$", re.M)
 _REPEAT = re.compile(r" ×\d+ until \S+$")
 
@@ -189,6 +194,10 @@ def digest_find(result: str) -> str | None:
     return _digest_rows(result, lambda text: _cut_keep_repeat(text, FIND_DIGEST_TEXT))
 
 
+def digest_overview(result: str) -> str | None:
+    return _digest_rows(result, lambda text: _cut_keep_repeat(text, OVERVIEW_DIGEST_TEMPLATE))
+
+
 def digest_search(result: str) -> str | None:
     def cut(text: str) -> str:
         head, sep, tail = text.partition(CUT.strip())
@@ -196,10 +205,6 @@ def digest_search(result: str) -> str | None:
         head = head if len(head) <= FIRST_LINE_MAX else head[:FIRST_LINE_MAX] + "…"
         return f"{head}{CUT}{tail.strip()[:LAST_LINE_MAX]}" if sep else head
     return _digest_rows(result, cut)
-
-
-def digest_overview(result: str) -> str | None:
-    return _digest_rows(result, lambda text: _cut_keep_repeat(text, OVERVIEW_DIGEST_TEMPLATE))
 
 
 def _digest_rows(result: str, cut) -> str | None:
@@ -223,3 +228,49 @@ def _cut_keep_repeat(text: str, size: int) -> str:
     body = text[:repeat.start()] if repeat else text
     body = body if len(body) <= size else body[:size] + "…"
     return body + (repeat.group(0) if repeat else "")
+
+
+Digest = Callable[[str], str | None]
+
+
+@dataclass(frozen=True)
+class DigestSeenResults:
+    """A ContextEdit for LangChain's ContextEditingMiddleware. `digests`: tool name -> its digest (app.agent.tools);
+    a tool without one is sent as it is."""
+
+    digests: Mapping[str, Digest] = field(default_factory=dict)
+
+    def apply(self, messages: list[AnyMessage], *, count_tokens: Callable[[Sequence[BaseMessage]], int]) -> None:
+        latest_turn = max(
+            (i for i, m in enumerate(messages) if isinstance(m, AIMessage) and m.tool_calls), default=-1)
+        for i in range(latest_turn):
+            message = messages[i]
+            digest = self.digests.get(message.name) if isinstance(message, ToolMessage) else None
+            if digest is not None:
+                shortened = digest(message.content if isinstance(message.content, str) else "")
+                if shortened is not None:
+                    messages[i] = message.model_copy(update={"content": shortened})
+
+
+def shorten_event(text: str, *, first_max: int, cause_max: int) -> str:
+    """An event cut by lines, not characters: its message (the lines up to the first stack frame, at most `first_max`
+    characters) and a stack trace's last "Caused by:" line (the root cause, at most `cause_max`). Frames are dropped
+    and the gap is marked "[...]". A short event comes back unchanged.
+
+    Used for fresh search hits and for digests. Cutting by characters lost facts from the middle of a line twice in the
+    eval: "PID 26512" (t1) and "User 35eea954" at character 334 of a 417-character WSO2 error line (t2, t6)."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return ""
+    head = [lines[0] if len(lines[0]) <= first_max else f"{lines[0][:first_max]} [...]"]
+    size = len(head[0])
+    for line in lines[1:]:  # a message continued on the next lines, e.g. a WSO2 "#### ALERT ####" banner
+        if _NOT_MESSAGE.match(line) or size + 1 + len(line) > first_max:
+            break
+        head.append(line)
+        size += 1 + len(line)
+    message = "\n".join(head)
+    if len(head) == len(lines):
+        return message
+    causes = [line for line in lines[len(head):] if line.startswith("Caused by:")]
+    return f"{message}{OMITTED}{causes[-1][:cause_max]}" if causes else f"{message}{OMITTED.rstrip()}"

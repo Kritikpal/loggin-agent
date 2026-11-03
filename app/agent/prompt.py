@@ -24,7 +24,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
-from app.agent.registry import MAX_TOOL_CALLS, TOOLS
+from app.agent.tools import MAX_TOOL_CALLS, TOOLS
 from app.ingestion.projects import Project
 
 PROMPT_VERSION = "3.0"

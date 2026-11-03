@@ -7,7 +7,6 @@ The folding is done in SQL (gaps and islands over the time-ordered events): the 
 """
 
 import logging
-from collections.abc import Callable
 from datetime import datetime, timedelta
 
 from langchain_core.tools import StructuredTool, ToolException
@@ -15,13 +14,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.overview import Scope, level_counts, window_text
-from app.agent.rows import Row, coverage_line, event_rows, row_text, short
-from app.agent.tools import (
+from app.agent.tools.overview import Scope, level_counts, window_text
+from app.agent.tools.format import Row, coverage_line, event_rows, row_text, short
+from app.agent.tools.common import (
     LEVEL_RANKS, TIME_HELP, Level, fitted, hidden_text, levels_from, severity_sql, time_window, tool,
 )
 from app.core.database import SessionLocal
 from app.ingestion.coverage import coverage_for_all
+from app.ingestion.projects import Project
 from app.ingestion.sources import Source
 
 logger = logging.getLogger(__name__)
@@ -49,15 +49,13 @@ class FindArgs(BaseModel):
     limit: int | None = Field(default=None, ge=1, description="Default 10, 25 for a window; max 25")
 
 
-def make_find_tool(
-    *, project_id: str, load_sources: Callable[[], tuple[Source, ...]], session_factory: Callable = SessionLocal,
-) -> StructuredTool:
-    """`load_sources` must return only the project's files: that is what keeps a chat inside its project."""
+def make_find_tool(project: Project) -> StructuredTool:
+    sources, project_id = project.files, project.id  # only the project's files: that keeps a chat inside its project
+
     async def run(**arguments) -> str:
         sig, needle = (arguments.get("sig") or "").strip().lower(), (arguments.get("text") or "").strip()
         if sig and needle:
             raise ToolException("give sig or text, not both")
-        sources = load_sources()
         start, end = time_window(arguments, sources)
         window = not sig and not needle
         if window and (start is None or end is None or end - start > MAX_WINDOW):
@@ -65,7 +63,7 @@ def make_find_tool(
         limit = min(arguments.get("limit") or (MAX_LIMIT if window else DEFAULT_LIMIT), MAX_LIMIT)
         ids = tuple(s.id for s in sources)
         try:
-            async with session_factory() as session:
+            async with SessionLocal() as session:
                 if sig and not await _known(session, ids, sig):
                     raise ToolException(f"unknown sig '{sig}'; copy one from an earlier result")
                 by_level = await level_counts(session, Scope(ids, start, end, None))

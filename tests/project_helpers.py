@@ -39,10 +39,10 @@ def make_project_folder(root: Path, project_id: str, yaml_text: str = WSO2_YAML,
 @asynccontextmanager
 async def projects_client(
     session_factory: Callable, projects: Callable[[], tuple[Project, ...]] | tuple[Project, ...],
-    embed: Callable[[str], list[float]] = fake_embed_query, overrides: dict | None = None,
+    overrides: dict | None = None,
 ) -> AsyncIterator[AsyncClient]:
-    """The real app with get_session / get_projects / get_embedder pointed at the test database and fakes."""
-    from app.controllers.dependencies import get_embedder, get_projects
+    """The real app with get_session / get_projects pointed at the test database and fakes."""
+    from app.controllers.dependencies import get_projects
     from app.core.database import get_session
     from app.main import create_app
 
@@ -54,7 +54,6 @@ async def projects_client(
     app.dependency_overrides.update({
         get_session: test_session,
         get_projects: projects if callable(projects) else (lambda: projects),
-        get_embedder: lambda: embed,
         **(overrides or {}),
     })
     try:

@@ -1,8 +1,7 @@
-"""Projects: read-only views of the project folders under LOGS_ROOT, and search within one project."""
+"""Projects: read-only views of the project folders under LOGS_ROOT, and chat about one."""
 
 import asyncio
 import uuid
-from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Annotated
 
@@ -10,15 +9,13 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.graph import Agent, ask
-from app.controllers.dependencies import get_agent, get_embedder, get_project, get_projects, get_usable_project
+from app.controllers.dependencies import get_agent, get_project, get_projects, get_usable_project
 from app.core.database import get_session
 from app.ingestion.coverage import coverage_for_all, file_stats, orphan_ids, time_spans
 from app.ingestion.projects import Project
 from app.ingestion.sources import FileSource
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.schemas.projects import ProjectDetail, ProjectFile, ProjectSummary
-from app.schemas.search_logs import SearchLogsRequest, SearchLogsResponse
-from app.tools.search_logs import search_logs
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -58,16 +55,6 @@ async def list_files(
     rows += [_file_row(f"{project.id}/{s.name}", s.name, "skipped", s.reason, None, None, None) for s in project.skipped]
     rows += [_file_row(i, _short(i), "missing", None, stats.get(i), None, None) for i in missing]
     return rows
-
-
-@router.post("/{project_id}/search-logs", response_model=SearchLogsResponse, summary="Hybrid log search in one project")
-async def search_project_logs(
-    request: SearchLogsRequest,
-    session: Annotated[AsyncSession, Depends(get_session)],
-    project: Annotated[Project, Depends(get_usable_project)],
-    embed: Annotated[Callable[[str], list[float]], Depends(get_embedder)],
-) -> SearchLogsResponse:
-    return await search_logs(request, session, sources=project.files, embed=embed)
 
 
 @router.post("/{project_id}/chat", response_model=ChatResponse, summary="Ask the log investigation agent about a project")

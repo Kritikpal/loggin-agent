@@ -12,9 +12,6 @@ from app.core.errors import register_exception_handlers
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
     await engine.dispose()
-    from app.core.llm import close_http_client  # deferred, like the agent: the model client loads on first chat
-
-    await close_http_client()
 
 
 def create_app() -> FastAPI:

@@ -5,7 +5,7 @@ Each check is present only when the case asks for it, except `budget`, which eve
     model_calls      at most `max_model_calls` model calls: turns that asked for tools, plus the final answer
     batched          with `expect_batch`, one turn asked for 2 or more tools (ADR-003 layer 1)
     forbidden_tools  no tool in `forbid` was called, not even a call the budget refused
-    budget           at most the registry budgets per tool were run: like app.agent.budget, a call with status
+    budget           at most the registry budgets per tool were run: like app.agent.middleware.budget, a call with status
                      "error" (refused, or a bad argument) did not run and does not count
     answer_has       each fact appears, in any of its spellings, case-insensitive
     answer_lacks     none of these texts appears, case-insensitive
@@ -16,7 +16,7 @@ import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
 
-# app.agent.registry.TOOLS; copied, since importing the agent creates the database engine (needs DATABASE_URL)
+# app.agent.tools.TOOLS; copied, since importing the agent creates the database engine (needs DATABASE_URL)
 BUDGETS = {"overview": 1, "find": 2, "search_logs": 2}
 # Models write "dev‑auth‑service" with non-breaking hyphens and "15:44 IST" with narrow spaces; compare plain text.
 _PLAIN = str.maketrans({**dict.fromkeys(map(ord, "‐‑‒–—−"), "-"),

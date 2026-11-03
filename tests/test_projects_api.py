@@ -79,20 +79,9 @@ async def test_the_same_file_name_in_two_projects_is_kept_apart(tmp_path, sessio
     async with projects_client(session_factory, lambda: scan_projects(tmp_path)) as http:
         counts = [(await http.get(f"/api/v1/projects/{p}/files")).json()[0]["event_count"] for p in ("a", "b")]
         listed = (await http.get("/api/v1/projects")).json()
-        res = await http.post("/api/v1/projects/a/search-logs", json={"query": "error", "top_k": 50})
-        other = await http.post("/api/v1/projects/a/search-logs", json={"query": "error", "source_ids": [f"b/{STEM}"]})
 
     assert counts[0] == counts[1] > 0
     assert all(p["indexed_from"] and p["indexed_to"] for p in listed)
-    assert res.status_code == 200 and res.json()["results"]
-    assert {hit["source_id"] for hit in res.json()["results"]} == {f"a/{STEM}"}
-    assert other.status_code == 404
-
-
-async def test_search_on_an_invalid_project_is_refused(session_factory):
-    async with projects_client(session_factory, (make_project("p", error="bad yaml"),)) as http:
-        res = await http.post("/api/v1/projects/p/search-logs", json={"query": "x"})
-    assert res.status_code == 409 and res.json()["error"]["code"] == "project_invalid"
 
 
 async def test_old_routes_are_gone(session_factory):

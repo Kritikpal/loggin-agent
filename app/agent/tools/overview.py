@@ -7,7 +7,7 @@ a citation (`L3079@10:49Z`), so a count can be cited without another call. Read-
 import logging
 import re
 from collections import defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -16,13 +16,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.rows import coverage_line, short
-from app.agent.tools import (
+from app.agent.tools.format import coverage_line, short
+from app.agent.tools.common import (
     TIME_HELP, Level, fitted, hidden_text, levels_from, project_timezone, severity_sql, time_window, tool,
 )
 from app.core.database import SessionLocal
 from app.ingestion.coverage import coverage_for_all
-from app.ingestion.sources import Source
+from app.ingestion.projects import Project
 
 logger = logging.getLogger(__name__)
 
@@ -71,16 +71,15 @@ class Scope:
         return " and ".join(conditions), params
 
 
-def make_overview_tool(
-    *, project_id: str, load_sources: Callable[[], tuple[Source, ...]], session_factory: Callable = SessionLocal,
-) -> StructuredTool:
-    """`load_sources` must return only the project's files. Days are counted in the project's timezone."""
+def make_overview_tool(project: Project) -> StructuredTool:
+    """Only the project's files are counted. Days are counted in the project's timezone."""
+    sources, project_id = project.files, project.id
+
     async def run(**arguments) -> str:
-        sources = load_sources()
         start, end = time_window(arguments, sources)
         top = min(arguments.get("top", DEFAULT_TOP), MAX_TOP)
         try:
-            async with session_factory() as session:
+            async with SessionLocal() as session:
                 by_level = await level_counts(session, Scope(tuple(s.id for s in sources), start, end, None))
                 shown = levels_from(arguments.get("min_level", "INFO"), list(by_level))
                 scope = Scope(tuple(s.id for s in sources), start, end, tuple(shown))

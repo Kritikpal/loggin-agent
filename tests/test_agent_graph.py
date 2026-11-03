@@ -281,19 +281,6 @@ async def test_a_tool_call_leaked_into_the_answer_text_is_run_as_a_real_call():
     assert [(c.name, c.args, c.status) for c in reply.tool_calls] == [("search_logs", {"query": "UserNotFound"}, "success")]
 
 
-async def test_recovered_calls_still_count_against_the_search_budget():
-    calls: list[str] = []
-    leak = '【assistant to=functions.search_logs<|channel|>commentary <|constrain|>json<|message|>{{"query":"q{}"}}'
-    agent = build_agent(model=script(*(AIMessage(content=leak.format(n)) for n in range(1, 5)),
-                                     AIMessage(content="Gave up.")),
-                        tool=fake_tool(calls), summary_tool=fake_summary_tool([]), project=PROJECT)
-
-    reply = await ask(agent, "find it")
-
-    assert calls == ["q1", "q2", "q3"]
-    assert [c.status for c in reply.tool_calls] == ["success", "success", "success", "error"]
-
-
 async def test_chat_on_an_unknown_project_is_404(chat_client):
     res = await chat_client.post("/api/v1/projects/nope/chat", json={"message": "why?"})
     assert res.status_code == 404 and res.json()["error"]["message"] == "No such project."

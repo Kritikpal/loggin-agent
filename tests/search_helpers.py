@@ -1,7 +1,7 @@
 """Shared helpers for the search_logs tests: the gold set, a fake embedder, indexing fixtures into the test database,
 hand-made rows with chosen vectors, and an HTTP client with the tool's collaborators overridden.
 
-The tool's modules (app.tools.search_logs, app.ingestion.coverage, app.controllers.dependencies) are imported INSIDE
+The tool's modules (app.search.hybrid, app.ingestion.coverage, app.controllers.dependencies) are imported INSIDE
 functions: written test-first, this kept the modules collectable before the tool existed.
 """
 
@@ -166,7 +166,7 @@ async def search(
     session_factory: Callable, sources: Sequence[FileSource], query: str, *,
     embed: Callable[[str], list[float]] = fake_embed_query, **kwargs: Any,
 ):
-    from app.tools.search_logs import search_logs  # the new signature; imported here so collection never fails
+    from app.search.hybrid import search_logs  # the new signature; imported here so collection never fails
 
     async with session_factory() as session:
         return await search_logs(request(query, **kwargs), session, sources=tuple(sources), embed=embed)

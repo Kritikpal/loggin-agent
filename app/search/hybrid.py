@@ -2,7 +2,7 @@
 
 Two legs find candidates independently, each with the request's filters inside its own SQL:
   semantic  cosine distance between the question's embedding and each event's embedding (rows without one skipped)
-  keyword   full-text match of the question's lexemes on search_tsv, OR-style (see app.tools.keyword_query)
+  keyword   full-text match of the question's lexemes on search_tsv, OR-style (see app.search.keywords)
 and reciprocal rank fusion merges them: score = sum over legs of weight / (RRF_K + rank in that leg). There is no
 similarity cutoff, so any question gets the nearest events; `matched_by` says which legs found each hit.
 
@@ -23,8 +23,8 @@ from app.core.embeddings import EMBEDDING_DIMENSIONS, embed_query
 from app.ingestion.coverage import coverage_for_all
 from app.ingestion.sources import Source, get_source
 from app.schemas.search_logs import LogFilters, SearchHit, SearchLogsRequest, SearchLogsResponse
-from app.tools.keyword_query import keyword_lexemes, tsquery_text
-from app.tools.search_queries import Candidate, fetch_events, filters, keyword_candidates, semantic_candidates
+from app.search.keywords import keyword_lexemes, tsquery_text
+from app.search.queries import Candidate, fetch_events, filters, keyword_candidates, semantic_candidates
 
 logger = logging.getLogger(__name__)
 

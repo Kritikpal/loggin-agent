@@ -8,11 +8,9 @@ from datetime import UTC, datetime
 
 import pytest
 
-from app.controllers import dependencies
-from app.core.embeddings import embed_query
-from app.tools.keyword_query import MAX_LEXEMES, keyword_lexemes, tsquery_text
-from app.tools.search_logs import RRF_K, fuse
-from app.tools.search_queries import Candidate
+from app.search.keywords import MAX_LEXEMES, keyword_lexemes, tsquery_text
+from app.search.hybrid import RRF_K, fuse
+from app.search.queries import Candidate
 from tests.search_helpers import (
     DEV_AUTH_ID, DEV_AUTH_LOG, copy_fixture, coverage, dev_auth_source, hit_lines, index_file, search,
 )
@@ -77,12 +75,6 @@ def test_rrf_ties_go_to_the_newest_event_then_the_event_key_and_untimed_events_l
 
 def test_no_legs_means_no_hits():
     assert fuse({}) == []
-
-
-# ---- dependencies ----
-
-def test_get_embedder_is_the_real_query_embedder():
-    assert dependencies.get_embedder() is embed_query
 
 
 # ---- embedder fallback (integration) ----

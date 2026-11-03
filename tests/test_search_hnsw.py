@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import text
 
-import app.tools.search_queries as search_queries
+import app.search.queries as search_queries
 from app.ingestion.sources import FileSource
 from tests.search_helpers import fake_vector, far, insert_rows, make_row, near, search
 

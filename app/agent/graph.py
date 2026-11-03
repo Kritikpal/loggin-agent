@@ -1,9 +1,9 @@
-"""The investigation agent: one model and the read-only tools of app.agent.registry (overview, find, search_logs),
+"""The investigation agent: one model and the read-only tools of app.agent.tools (overview, find, search_logs),
 looped by LangGraph's agent runtime.
 
-Each tool's budget, and the total, is enforced here in code (app.agent.budget): a call past its budget is not run, the
+Each tool's budget, and the total, is enforced here in code (app.agent.middleware.budget): a call past its budget is not run, the
 model is told so and must answer with what it has. The prompt asks for the same limits, but only this makes them
-certain. The real model is also paced to Groq's tokens per minute (app.agent.pacer).
+certain.
 """
 
 import logging
@@ -17,13 +17,11 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AnyMessage, ToolMessage
 from langchain_core.tools import BaseTool
 
-from app.agent.budget import REFUSED, ToolBudget
-from app.agent.context import DigestSeenResults
-from app.agent.leaks import RecoverLeakedToolCalls
-from app.agent.pacer import PaceModelCalls
+from app.agent.middleware.budget import REFUSED, ToolBudget
+from app.agent.middleware.leaks import StripLeakedToolCalls
 from app.agent.prompt import Spans, build_system_prompt
-from app.agent.registry import BUDGETS, MAX_TOOL_CALLS, TOOLS
-from app.agent.rows import parse_coverage
+from app.agent.tools import BUDGETS, MAX_TOOL_CALLS, TOOLS
+from app.agent.tools.format import DigestSeenResults, parse_coverage
 from app.core.errors import AIUnavailableError
 from app.core.llm import chat_model
 from app.ingestion.projects import Project
@@ -38,9 +36,8 @@ def build_agent(
     *, model: BaseChatModel | None = None, tools: Sequence[BaseTool] | None = None, project: Project,
     spans: Spans | None = None,
 ) -> Agent:
-    """Build the agent. Everything defaults to the real thing; tests pass a scripted model and fake tools. Only the
-    real model is paced: a scripted one costs no tokens and must not wait."""
-    tools = list(tools) if tools is not None else [spec.factory(project) for spec in TOOLS]
+    """Build the agent. Everything defaults to the real thing; tests pass a scripted model and fake tools."""
+    tools = list(tools) if tools is not None else [spec.make(project) for spec in TOOLS]
     return create_agent(
         model or chat_model(),
         tools,
@@ -48,8 +45,7 @@ def build_agent(
         middleware=[
             ToolBudget(BUDGETS, MAX_TOOL_CALLS),
             ContextEditingMiddleware(edits=[DigestSeenResults({s.name: s.digest for s in TOOLS})]),  # ADR-003
-            RecoverLeakedToolCalls(),  # gpt-oss sometimes writes a tool call into its answer text
-            *([PaceModelCalls()] if model is None else []),
+            StripLeakedToolCalls(),  # gpt-oss sometimes writes tool-call markup into its answer
         ],
     )
 
@@ -87,7 +83,7 @@ def _coverage_note(tool_calls: list[ToolCall]) -> str:
     statuses: dict[str, str] = {}
     more = 0  # incomplete files the tool did not name (it names at most 10)
     for call in tool_calls:
-        coverage = parse_coverage(call.result or "")  # every tool ends with the line app.agent.rows.coverage_line
+        coverage = parse_coverage(call.result or "")  # every tool ends with the line app.agent.tools.format.coverage_line
         for status in COVERAGE_NOTES:
             for name in coverage.get(status, []):
                 statuses.setdefault(name, status)
