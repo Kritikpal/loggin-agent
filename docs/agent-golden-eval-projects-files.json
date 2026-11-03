@@ -1,0 +1,550 @@
+[
+ {
+  "id": "w1-error-count-and-kinds-1030",
+  "class": "summary_then_search",
+  "kind": "common",
+  "question": "How many errors did WSO2 log on 30 October, and what kinds were they?",
+  "answer": "On 30 October 2026 the WSO2 logs recorded **132 ERROR‑level events** (first at 08:31:46 UTC, last at 14:50:19 UTC)【summary】.  \n\nThe errors fall into a few distinct categories:\n\n| Kind of error (exception) | Typical source / message |\n|---|---|\n| **`org.wso2.charon3.core.exceptions.CharonException`** – “Error while updating attributes of user” | Seen when SCIM‑2 updates fail; the underlying cause is often an LDAP schema problem (e.g., `javax.naming.directory.SchemaViolationException`)【wso2carbon-10-30-2026.1 L4550‑4637】 |\n| **`javax.naming.OperationNotSupportedException`** | Raised during attribute updates when the LDAP operation is not allowed【wso2carbon-10-30-2026.1 L3283‑3384】 |\n| **`java.lang.NullPointerException`** | Occurs in the same SCIM update path when a required LDAP object is missing【wso2carbon-10-30-2026.1 L21868‑21966】 |\n| **`org.wso2.carbon.user.core.UserStoreException`** | Wrapped around LDAP schema violations during user‑store updates【wso2carbon-10-30-2026.1 L4638‑4721】 |\n| **`org.wso2.carbon.user.core.ldap.LDAPConnectionContext` errors** – `javax.naming.CommunicationException`, `java.net.ConnectException`, `java.net.SocketTimeoutException` | Repeated failures to obtain an LDAP connection (e.g., “Error obtaining connection … keycloak‑window.cnxy.in:636”)【wso2carbon-10-30-2026.1 L23299‑23399】【wso2carbon-10-30-2026.1 L23197‑23297】【wso2carbon-10-30-2026.1 L23095‑23195】 |\n\nIn short, the day’s errors were dominated by **SCIM attribute‑update failures** (CharonException with various underlying LDAP exceptions) and **LDAP connection problems** (communication, timeout, or connection‑refused errors).",
+  "tool_calls": [
+   {
+    "name": "summarize_logs",
+    "turn": 1,
+    "args": {
+     "end_time": "2026-10-30T18:29:59Z",
+     "group_by": "day",
+     "levels": [
+      "error"
+     ],
+     "start_time": "2026-10-29T18:30:00Z"
+    },
+    "status": "success",
+    "result": "{\"groups\": [{\"day\": \"2026-10-30\", \"level\": \"ERROR\", \"count\": 132, \"first_at\": \"2026-10-30T08:31:46.793000+00:00\", \"last_at\": \"2026-10-30T14:50:19.613000+00:00\"}], \"coverage\": {\"files\": 7, \"indexed\": 7}}"
+   },
+   {
+    "name": "search_logs",
+    "turn": 2,
+    "args": {
+     "end_time": "2026-10-30T23:59:59Z",
+     "levels": [
+      "ERROR"
+     ],
+     "query": "error",
+     "start_time": "2026-10-30T00:00:00Z",
+     "top_k": 10
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"file\": \"wso2carbon-10-30-2026.1\", \"occurred_at\": \"2026-10-30T11:06:46.464000+00:00\", \"level\": \"ERROR\", \"line_start\": 4550, \"line_end\": 4637, \"raw_text\": \"TID: [-1234] [scim2] [2026-10-30 16:36:46,464] [90c6d5fb-2280-4144-8ebc-27c4eeeeac42] ERROR {org.wso2.charon3.core.protocol.endpoin"
+   },
+   {
+    "name": "search_logs",
+    "turn": 3,
+    "args": {
+     "end_time": "2026-10-30T23:59:59Z",
+     "levels": [
+      "ERROR"
+     ],
+     "query": "Exception",
+     "start_time": "2026-10-30T00:00:00Z",
+     "top_k": 20
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"file\": \"wso2carbon-10-30-2026.1\", \"occurred_at\": \"2026-10-30T14:50:19.171000+00:00\", \"level\": \"ERROR\", \"line_start\": 23299, \"line_end\": 23399, \"raw_text\": \"TID: [] [] [2026-10-30 20:20:19,171] [] ERROR {org.wso2.carbon.user.core.ldap.LDAPConnectionContext} - Error obtaining connection"
+   }
+  ],
+  "model_calls": 4,
+  "attempts": 1,
+  "seconds": 39.0,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": false,
+   "cites": false,
+   "passed": false
+  }
+ },
+ {
+  "id": "w2-scim-update-cause",
+  "class": "search_only",
+  "kind": "common",
+  "question": "Why is SCIM failing to update users on 30 October?",
+  "answer": "The SCIM 2 endpoint generated a large number of errors on 30 October (132 ERROR‑level events between 08:31 and 14:50 UTC) — the logs show the update operation repeatedly failing with an LDAP schema violation:\n\n* **OBJ_CLASS_VIOLATION** – the update request triggers a `javax.naming.directory.SchemaViolationException` (error code 65) from the LDAP server:  \n\n  `...Error while updating attributes of user … Caused by: javax.naming.directory.SchemaViolationException: [LDAP: error code 65 - 0000207D: UpdErr: DSID-03151D55, problem 6002 (OBJ_CLASS_VIOLATION)…` (wso2carbon-10-30-2026.1 L4722‑L4809, 2026‑10‑30T11:45:03.747Z)  \n\n  The same exception appears in another error entry a few minutes earlier (wso2carbon-10-30-2026.1 L4550‑L4637, 2026‑10‑30T11:06:46.464Z).\n\n* These errors are logged by the SCIM implementation (`org.wso2.charon3.core.protocol.endpoints.AbstractResourceManager`) while processing the update request.\n\n**What this means**\n\nThe LDAP directory rejects the attribute changes because they would violate the object‑class definition of the user entry (e.g., trying to set an attribute that is not allowed for the entry’s object class, or providing a value that does not conform to the schema). The SCIM layer simply propagates the LDAP error as a failure to update the user.\n\n**Next steps for you**\n\n1. **Inspect the SCIM update payload** – verify which attributes are being sent.  \n2. **Compare those attributes with the LDAP schema** for the user’s object class (usually `inetOrgPerson`, `person`, etc.). Remove or correct any attributes that are not defined or have invalid values.  \n3. If you need to store additional attributes, consider extending the LDAP schema (add a custom object class or attribute) and update the user store configuration accordingly.  \n4. Re‑run a test update after adjusting the payload/schema; the error should disappear.\n\nThe repeated `OBJ_CLASS_VIOLATION` errors are the direct cause of the SCIM update failures on 30 October.\n\n_Note: 1 further search was not run (limit of 3 searches per question)._",
+  "tool_calls": [
+   {
+    "name": "summarize_logs",
+    "turn": 1,
+    "args": {
+     "end_time": "2026-10-30T18:29:59Z",
+     "group_by": "level",
+     "start_time": "2026-10-29T18:30:00Z"
+    },
+    "status": "success",
+    "result": "{\"groups\": [{\"level\": \"DEBUG\", \"count\": 14888, \"first_at\": \"2026-10-30T11:49:26.918000+00:00\", \"last_at\": \"2026-10-30T16:38:27.675000+00:00\"}, {\"level\": \"INFO\", \"count\": 545, \"first_at\": \"2026-10-30T07:53:15.918000+00:00\", \"last_at\": \"2026-10-30T16:38:29.838000+00:00\"}, {\"level\": \"ERROR\", \"count\": 1"
+   },
+   {
+    "name": "search_logs",
+    "turn": 2,
+    "args": {
+     "end_time": "2026-10-30T23:59:59Z",
+     "query": "SCIM update",
+     "start_time": "2026-10-30T00:00:00Z",
+     "top_k": 5
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"file\": \"wso2carbon-10-30-2026.1\", \"occurred_at\": \"2026-10-30T14:30:20.921000+00:00\", \"level\": \"DEBUG\", \"line_start\": 21582, \"line_end\": 21582, \"raw_text\": \"TID: [-1234] [scim2] [2026-10-30 20:00:20,921] [5a7b9d14-5698-4a29-98d4-70b737ac782d] DEBUG {org.wso2.carbon.user.core.ldap.Uniqu"
+   },
+   {
+    "name": "search_logs",
+    "turn": 3,
+    "args": {
+     "end_time": "2026-10-30T12:00:00Z",
+     "file": "wso2carbon-10-30-2026.1",
+     "query": "SchemaViolationException",
+     "start_time": "2026-10-30T11:00:00Z",
+     "top_k": 5
+    },
+    "status": "error",
+    "result": "{\"error\": \"invalid search arguments: file: Extra inputs are not permitted\"}"
+   },
+   {
+    "name": "search_logs",
+    "turn": 4,
+    "args": {
+     "end_time": "2026-10-30T12:00:00Z",
+     "query": "OBJ_CLASS_VIOLATION",
+     "start_time": "2026-10-30T11:00:00Z",
+     "top_k": 10
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"file\": \"wso2carbon-10-30-2026.1\", \"occurred_at\": \"2026-10-30T11:45:03.747000+00:00\", \"level\": \"ERROR\", \"line_start\": 4722, \"line_end\": 4809, \"raw_text\": \"TID: [-1234] [scim2] [2026-10-30 17:15:03,747] [10698cf7-1193-430b-9a95-b06604b0eab9] ERROR {org.wso2.charon3.core.protocol.endpoin"
+   }
+  ],
+  "model_calls": 5,
+  "attempts": 1,
+  "seconds": 29.2,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": false,
+   "cites": false,
+   "passed": false
+  }
+ },
+ {
+  "id": "w3-ldap-connection-failures",
+  "class": "search_only",
+  "kind": "common",
+  "question": "Is the LDAP / Active Directory connection working? When did it fail?",
+  "answer": "The logs contain several *Cannot create connection to LDAP server* messages, which indicate that the LDAP/Active Directory connector was not able to reach the server.\n\n**Failures observed**\n\n| UTC time (log) | File / line | Message |\n|----------------|------------|---------|\n| 2026‑10‑30 14:41:58.266 Z | wso2carbon‑10‑30‑2026.1 L22983 | `Cannot create connection to LDAP server … Error occurred while obtaining LDAP connection, LDAP connection circuit breaker …` |\n| 2026‑10‑30 14:50:19.613 Z | wso2carbon‑10‑30‑2026.1 L23402 | `Cannot create connection to LDAP server … Error occurred while obtaining LDAP connection, LDAP connection circuit breaker …` |\n| 2026‑11‑01 14:42:30.470 Z | wso2carbon‑11‑01‑2026.1 L257 | `Error occurred while obtaining LDAP connection … LDAP connection circuit breaker state set to: open` |\n\nThese entries show that the LDAP connection attempts failed on **30 Oct 2026** (two consecutive errors) and again on **1 Nov 2026**, after which the circuit‑breaker was set to *open*, preventing further connection attempts.\n\n**Is the connection working?**  \nNo successful “connected” or “authentication succeeded” messages for LDAP appear in the indexed logs, while the above error and warning entries confirm that the connector was failing at the recorded times. Therefore, the LDAP/Active Directory connection was not working during those periods.\n\n_Note: 1 further search was not run (limit of 3 searches per question)._",
+  "tool_calls": [
+   {
+    "name": "search_logs",
+    "turn": 1,
+    "args": {
+     "query": "LDAP",
+     "top_k": 5
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"file\": \"wso2carbon-10-30-2026.1\", \"occurred_at\": \"2026-10-30T14:50:19.613000+00:00\", \"level\": \"ERROR\", \"line_start\": 23402, \"line_end\": 23402, \"raw_text\": \"TID: [] [] [2026-10-30 20:20:19,613] [] ERROR {org.wso2.carbon.user.core.ldap.UniqueIDReadWriteLDAPUserStoreManager} - Cannot cre"
+   },
+   {
+    "name": "search_logs",
+    "turn": 2,
+    "args": {
+     "query": "connected to LDAP",
+     "top_k": 5
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"file\": \"wso2carbon-10-30-2026.1\", \"occurred_at\": \"2026-10-30T14:50:19.613000+00:00\", \"level\": \"ERROR\", \"line_start\": 23402, \"line_end\": 23402, \"raw_text\": \"TID: [] [] [2026-10-30 20:20:19,613] [] ERROR {org.wso2.carbon.user.core.ldap.UniqueIDReadWriteLDAPUserStoreManager} - Cannot cre"
+   },
+   {
+    "name": "search_logs",
+    "turn": 3,
+    "args": {
+     "query": "LDAP connection",
+     "top_k": 10
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"file\": \"wso2carbon-10-30-2026.1\", \"occurred_at\": \"2026-10-30T14:50:19.613000+00:00\", \"level\": \"ERROR\", \"line_start\": 23402, \"line_end\": 23402, \"raw_text\": \"TID: [] [] [2026-10-30 20:20:19,613] [] ERROR {org.wso2.carbon.user.core.ldap.UniqueIDReadWriteLDAPUserStoreManager} - Cannot cre"
+   },
+   {
+    "name": "search_logs",
+    "turn": 4,
+    "args": {
+     "query": "connected to LDAP",
+     "top_k": 10
+    },
+    "status": "error",
+    "result": "Tool call limit exceeded. Do not call 'search_logs' again."
+   },
+   {
+    "name": "summarize_logs",
+    "turn": 5,
+    "args": {
+     "group_by": "file",
+     "levels": [
+      "ERROR",
+      "WARN"
+     ]
+    },
+    "status": "success",
+    "result": "{\"groups\": [{\"file\": \"wso2carbon-10-30-2026.1\", \"level\": \"ERROR\", \"count\": 132, \"first_at\": \"2026-10-30T08:31:46.793000+00:00\", \"last_at\": \"2026-10-30T14:50:19.613000+00:00\"}, {\"file\": \"wso2carbon-10-30-2026.1\", \"level\": \"WARN\", \"count\": 37, \"first_at\": \"2026-10-30T07:53:21.524000+00:00\", \"last_at\":"
+   }
+  ],
+  "model_calls": 6,
+  "attempts": 1,
+  "seconds": 78.4,
+  "checks": {
+   "tools_order": true,
+   "budget": false,
+   "answer_has": false,
+   "cites": false,
+   "passed": false
+  }
+ },
+ {
+  "id": "w4-restarts-1030",
+  "class": "beyond_tools",
+  "kind": "edge",
+  "question": "How many times was WSO2 restarted on 30 October, and did the last startup finish?",
+  "answer": "The logs for 30 October contain six “WSO2 Carbon started …” entries, each indicating that the server finished a start‑up sequence:\n\n* L61 – 2026‑10‑30 07:55:49 UTC – started in 178 sec  \n* L4926 – 2026‑10‑30 11:51:11 UTC – started in 186 sec  \n* L9690 – 2026‑10‑30 13:14:53 UTC – started in 218 sec  \n* L11078 – 2026‑10‑30 13:24:36 UTC – started in 180 sec  \n* L15592 – 2026‑10‑30 14:02:08 UTC – started in 194 sec  \n* L19009 – 2026‑10‑30 14:20:51 UTC – started in 207 sec  \n\nThese messages are logged only after the start‑up process completes, so each line confirms a successful restart. The latest entry (L19009) shows the final start‑up on that day finished successfully ( “WSO2 Carbon started in 207 sec” )【wso2carbon-10-30-2026.1 L19009-19009 INFO 2026-10-30T14:20:51.997000+00:00】.  \n\n**Result:** Six restarts are recorded for 30 October, and the last one completed normally.\n\n_Note: 1 further search was not run (limit of 3 searches per question)._",
+  "tool_calls": [
+   {
+    "name": "search_logs",
+    "turn": 1,
+    "args": {
+     "end_time": "2026-10-30T18:29:59Z",
+     "query": "started",
+     "start_time": "2026-10-29T18:30:00Z",
+     "top_k": 10
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"file\": \"wso2carbon-10-30-2026.1\", \"occurred_at\": \"2026-10-30T14:20:51.997000+00:00\", \"level\": \"INFO\", \"line_start\": 19009, \"line_end\": 19009, \"raw_text\": \"TID: [] [] [2026-10-30 19:50:51,997] []  INFO {org.wso2.carbon.core.internal.StartupFinalizerServiceComponent} - WSO2 Carbon start"
+   },
+   {
+    "name": "summarize_logs",
+    "turn": 2,
+    "args": {
+     "files": [
+      "wso2carbon-10-30-2026.1"
+     ],
+     "group_by": "day"
+    },
+    "status": "success",
+    "result": "{\"groups\": [{\"day\": \"2026-10-30\", \"level\": \"DEBUG\", \"count\": 14888, \"first_at\": \"2026-10-30T11:49:26.918000+00:00\", \"last_at\": \"2026-10-30T16:38:27.675000+00:00\"}, {\"day\": \"2026-10-30\", \"level\": \"INFO\", \"count\": 545, \"first_at\": \"2026-10-30T07:53:15.918000+00:00\", \"last_at\": \"2026-10-30T16:38:29.838"
+   },
+   {
+    "name": "search_logs",
+    "turn": 3,
+    "args": {
+     "files": [
+      "wso2carbon-10-30-2026.1"
+     ],
+     "query": "WSO2 Carbon started",
+     "top_k": 20
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"file\": \"wso2carbon-10-30-2026.1\", \"occurred_at\": \"2026-10-30T14:02:08.838000+00:00\", \"level\": \"INFO\", \"line_start\": 15592, \"line_end\": 15592, \"raw_text\": \"TID: [] [] [2026-10-30 19:32:08,838] []  INFO {org.wso2.carbon.core.internal.StartupFinalizerServiceComponent} - WSO2 Carbon start"
+   },
+   {
+    "name": "search_logs",
+    "turn": 4,
+    "args": {
+     "files": [
+      "wso2carbon-10-30-2026.1"
+     ],
+     "query": "started in",
+     "top_k": 100
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"file\": \"wso2carbon-10-30-2026.1\", \"occurred_at\": \"2026-10-30T14:20:51.997000+00:00\", \"level\": \"INFO\", \"line_start\": 19009, \"line_end\": 19009, \"raw_text\": \"TID: [] [] [2026-10-30 19:50:51,997] []  INFO {org.wso2.carbon.core.internal.StartupFinalizerServiceComponent} - WSO2 Carbon start"
+   },
+   {
+    "name": "search_logs",
+    "turn": 5,
+    "args": {
+     "files": [
+      "wso2carbon-10-30-2026.1"
+     ],
+     "query": "\"WSO2 Carbon started\"",
+     "top_k": 200
+    },
+    "status": "error",
+    "result": "Tool call limit exceeded. Do not call 'search_logs' again."
+   }
+  ],
+  "model_calls": 6,
+  "attempts": 1,
+  "seconds": 64.5,
+  "checks": {
+   "tools_order": true,
+   "budget": false,
+   "answer_has": false,
+   "cites": true,
+   "passed": false
+  }
+ },
+ {
+  "id": "w5-email-not-sent",
+  "class": "search_only",
+  "kind": "common",
+  "question": "Why are notification emails not being sent?",
+  "answer": "The logs show that every attempt to send a notification email ends with an **SMTP authentication failure**:\n\n* **10‑Oct‑2026** – `WARN … EmailEventAdapter - Exception occurred when sending email to … 535 5.7.3 Authentication unsuccessful … javax.mail.AuthenticationFailedException` (wso2carbon-10-30-2026.1 L4430‑4447, 2026‑10‑30T11:06:41.471Z).  \n* **28‑Oct‑2026** – `WARN … EmailEventAdapter - Exception occurred when sending email to … 535 5.7.3 Authentication unsuccessful … javax.mail.AuthenticationFailedException` (wso2carbon-10-28-2026.1 L101‑118, 2026‑10‑28T07:50:48.597Z).\n\nThe same pattern appears repeatedly – the `EmailEventAdapter` cannot authenticate to the outbound mail server, so no notification emails are dispatched. The summary of WARN‑level events shows dozens of such entries across the log files (summary).\n\n**What to check**\n\n1. **SMTP credentials** – verify the username/password configured for the mail adapter are correct.  \n2. **Mail server access** – ensure the WSO2 server can reach the SMTP host (network/firewall, correct port, TLS/SSL settings).  \n3. **Account status** – the mailbox may be locked or require additional security steps (e.g., app passwords, MFA).  \n\nCorrecting the SMTP authentication details should allow the `EmailEventAdapter` to send the notification emails.",
+  "tool_calls": [
+   {
+    "name": "search_logs",
+    "turn": 1,
+    "args": {
+     "query": "email",
+     "top_k": 5
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"file\": \"wso2carbon-10-30-2026.1\", \"occurred_at\": \"2026-10-30T14:18:52.855000+00:00\", \"level\": \"DEBUG\", \"line_start\": 18981, \"line_end\": 18981, \"raw_text\": \"TID: [] [] [2026-10-30 19:48:52,855] [] DEBUG {org.wso2.carbon.user.core.ldap.LDAPConnectionContext} - Connection Name :: [REDACT"
+   },
+   {
+    "name": "search_logs",
+    "turn": 2,
+    "args": {
+     "query": "notification email",
+     "top_k": 5
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"file\": \"wso2carbon-10-30-2026.1\", \"occurred_at\": \"2026-10-30T13:50:18.228000+00:00\", \"level\": \"DEBUG\", \"line_start\": 13605, \"line_end\": 13605, \"raw_text\": \"TID: [-1234] [oauth2] [2026-10-30 19:20:18,228] [85ddeeed-e4ff-448a-b273-741ebb2cce90] DEBUG {org.wso2.carbon.user.core.ldap.Read"
+   },
+   {
+    "name": "summarize_logs",
+    "turn": 3,
+    "args": {
+     "group_by": "file",
+     "levels": [
+      "WARN"
+     ]
+    },
+    "status": "success",
+    "result": "{\"groups\": [{\"file\": \"wso2carbon-10-30-2026.1\", \"level\": \"WARN\", \"count\": 37, \"first_at\": \"2026-10-30T07:53:21.524000+00:00\", \"last_at\": \"2026-10-30T14:50:19.444000+00:00\"}, {\"file\": \"wso2carbon-01-07-2026.1\", \"level\": \"WARN\", \"count\": 19, \"first_at\": \"2026-01-07T06:19:26.212000+00:00\", \"last_at\": \""
+   },
+   {
+    "name": "search_logs",
+    "turn": 4,
+    "args": {
+     "query": "Exception occurred when sending email",
+     "top_k": 5
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"file\": \"wso2carbon-10-30-2026.1\", \"occurred_at\": \"2026-10-30T13:50:18.261000+00:00\", \"level\": \"DEBUG\", \"line_start\": 13656, \"line_end\": 13656, \"raw_text\": \"TID: [-1234] [oauth2] [2026-10-30 19:20:18,261] [85ddeeed-e4ff-448a-b273-741ebb2cce90] DEBUG {org.wso2.carbon.user.core.ldap.Read"
+   }
+  ],
+  "model_calls": 5,
+  "attempts": 1,
+  "seconds": 40.6,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": true,
+   "answer_lacks": true,
+   "cites": false,
+   "passed": false
+  }
+ },
+ {
+  "id": "w6-incident-window-ist",
+  "class": "search_only",
+  "kind": "edge",
+  "question": "What happened around 6:40 PM IST on 30 October?",
+  "answer": "Around 6:40 PM IST on 30 October the gateway logged a burst of SCIM‑2 processing errors. At 6:48:56 PM IST (13:18:56 UTC) three ERROR entries were written by `org.wso2.carbon.identity.scim2.common.utils.AttributeMapper`, each reporting a `CharonException: Error in parsing date time. Date time should adhere to ISO_OFFSET_DATE_TIME format` (​wso2carbon-10-30-2026.1 L10966, 13:18:56 UTC; wso2carbon-10-30-2026.1 L10965, 13:18:56 UTC; wso2carbon-10-30-2026.1 L10964, 13:18:56 UTC).  \n\nIn the same minute the LDAP user‑store manager emitted DEBUG messages about a request for the attribute `failedBackupCodeAttempts` (​wso2carbon-10-30-2026.1 L10815, 13:18:54 UTC; wso2carbon-10-30-2026.1 L10703, 13:18:51 UTC).  \n\nSo the main activity at that time was a series of date‑time parsing failures in the SCIM‑2 component, accompanied by routine attribute‑lookup debug logs.",
+  "tool_calls": [
+   {
+    "name": "search_logs",
+    "turn": 1,
+    "args": {
+     "end_time": "2026-10-30T13:20:00Z",
+     "query": "",
+     "start_time": "2026-10-30T13:00:00Z",
+     "top_k": 10
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"file\": \"wso2carbon-10-30-2026.1\", \"occurred_at\": \"2026-10-30T13:18:56.996000+00:00\", \"level\": \"ERROR\", \"line_start\": 10966, \"line_end\": 10966, \"raw_text\": \"TID: [-1234] [scim2] [2026-10-30 18:48:56,996] [b77c0c68-5740-4d1d-8006-7a228d683488] ERROR {org.wso2.carbon.identity.scim2.commo"
+   }
+  ],
+  "model_calls": 2,
+  "attempts": 1,
+  "seconds": 4.1,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": false,
+   "cites": false,
+   "passed": false
+  }
+ },
+ {
+  "id": "w7-auth-cache-error",
+  "class": "search_only",
+  "kind": "common",
+  "question": "Users saw \"Cannot find AuthenticationResult from the cache\". When, and how often?",
+  "answer": "The log contains two ERROR entries that say **“Cannot find AuthenticationResult from the cache”**. Both are on the same day:\n\n* 2026‑03‑02 10:38:54.055 UTC (wso2carbon‑03‑02‑2026.1 L67)  \n* 2026‑03‑02 10:40:50.259 UTC (wso2carbon‑03‑02‑2026.1 L68)\n\nSo the message was logged **twice**, both on 2026‑03‑02.\n\n_Note: 1 further search was not run (limit of 3 searches per question)._",
+  "tool_calls": [
+   {
+    "name": "search_logs",
+    "turn": 1,
+    "args": {
+     "query": "Cannot find AuthenticationResult from the cache",
+     "top_k": 5
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"file\": \"wso2carbon-10-30-2026.1\", \"occurred_at\": \"2026-10-30T14:22:36.130000+00:00\", \"level\": \"DEBUG\", \"line_start\": 19037, \"line_end\": 19037, \"raw_text\": \"TID: [-1234] [] [2026-10-30 19:52:36,130] [6042f3af-93f1-410b-8651-d5e045e9e83d] DEBUG {org.wso2.carbon.user.core.ldap.ReadOnlyLD"
+   },
+   {
+    "name": "search_logs",
+    "turn": 2,
+    "args": {
+     "query": "\"Cannot find AuthenticationResult from the cache\"",
+     "top_k": 10
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"file\": \"wso2carbon-10-30-2026.1\", \"occurred_at\": \"2026-10-30T14:22:36.130000+00:00\", \"level\": \"DEBUG\", \"line_start\": 19037, \"line_end\": 19037, \"raw_text\": \"TID: [-1234] [] [2026-10-30 19:52:36,130] [6042f3af-93f1-410b-8651-d5e045e9e83d] DEBUG {org.wso2.carbon.user.core.ldap.ReadOnlyLD"
+   },
+   {
+    "name": "search_logs",
+    "turn": 3,
+    "args": {
+     "query": "AuthenticationResult from the cache",
+     "top_k": 20
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"file\": \"wso2carbon-10-30-2026.1\", \"occurred_at\": \"2026-10-30T14:22:36.130000+00:00\", \"level\": \"DEBUG\", \"line_start\": 19037, \"line_end\": 19037, \"raw_text\": \"TID: [-1234] [] [2026-10-30 19:52:36,130] [6042f3af-93f1-410b-8651-d5e045e9e83d] DEBUG {org.wso2.carbon.user.core.ldap.ReadOnlyLD"
+   },
+   {
+    "name": "search_logs",
+    "turn": 4,
+    "args": {
+     "query": "AuthenticationResult from the cache",
+     "top_k": 50
+    },
+    "status": "error",
+    "result": "Tool call limit exceeded. Do not call 'search_logs' again."
+   }
+  ],
+  "model_calls": 5,
+  "attempts": 1,
+  "seconds": 33.9,
+  "checks": {
+   "tools_order": true,
+   "budget": false,
+   "answer_has": true,
+   "cites": true,
+   "passed": false
+  }
+ },
+ {
+  "id": "w8-no-errors-0127",
+  "class": "summary_only",
+  "kind": "edge",
+  "question": "Were there any errors on 27 January?",
+  "answer": "No ERROR‑level events were recorded for 27 January (local Asia/Kolkata). Both summary queries for the relevant UTC windows returned empty results (summary).",
+  "tool_calls": [
+   {
+    "name": "summarize_logs",
+    "turn": 1,
+    "args": {
+     "end_time": "2026-01-27T18:29:59Z",
+     "levels": [
+      "ERROR"
+     ],
+     "start_time": "2026-01-26T18:30:00Z"
+    },
+    "status": "success",
+    "result": "{\"groups\": [], \"coverage\": {\"files\": 7, \"indexed\": 7}}"
+   },
+   {
+    "name": "summarize_logs",
+    "turn": 2,
+    "args": {
+     "end_time": "2026-01-27T23:59:59Z",
+     "levels": [
+      "ERROR"
+     ],
+     "start_time": "2026-01-27T00:00:00Z"
+    },
+    "status": "success",
+    "result": "{\"groups\": [], \"coverage\": {\"files\": 7, \"indexed\": 7}}"
+   }
+  ],
+  "model_calls": 3,
+  "attempts": 1,
+  "seconds": 2.9,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": true,
+   "passed": true
+  }
+ },
+ {
+  "id": "w9-backchannel-logout",
+  "class": "search_only",
+  "kind": "common",
+  "question": "Why did the back-channel logout fail?",
+  "answer": "The back‑channel logout attempt raised an **SSLHandshakeException** when the gateway tried to send the logout request to the external URL. The stack trace shows a *PKIX path building failed* error, caused by a **SunCertPathBuilderException** indicating that the server’s certificate could not be validated against the trust store (“unable to find valid certification path to requested target”) (wso2carbon-10-28-2026.1 L140‑190, 2026‑10‑28T09:04:30.415Z).\n\n**What this means**  \nThe logout request could not be delivered because the TLS handshake failed – the gateway does not trust the certificate presented by `https://ddh.solution.com/home`.\n\n**Next steps you can check manually**  \n\n1. Verify that the target server’s certificate (or its CA chain) is imported into the WSO2 trust store (`client-truststore.jks` by default).  \n2. Ensure the certificate is not expired and matches the hostname.  \n3. Confirm that the trust store path and password are correctly configured in the identity server’s `deployment.toml` (or relevant SSL configuration).  \n4. If the target uses a self‑signed or internal CA certificate, add it to the trust store and restart the server (or reload the trust store if supported).  \n\nAddressing the certificate trust issue should allow the back‑channel logout request to succeed.",
+  "tool_calls": [
+   {
+    "name": "search_logs",
+    "turn": 1,
+    "args": {
+     "query": "back-channel logout",
+     "top_k": 5
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"file\": \"wso2carbon-10-30-2026.1\", \"occurred_at\": \"2026-10-30T14:23:35.081000+00:00\", \"level\": \"DEBUG\", \"line_start\": 19549, \"line_end\": 19549, \"raw_text\": \"TID: [-1234] [scim2] [2026-10-30 19:53:35,081] [acf4d9ed-77cf-466d-9868-cbb06d81fa7c] DEBUG {org.wso2.carbon.user.core.ldap.ReadO"
+   },
+   {
+    "name": "search_logs",
+    "turn": 2,
+    "args": {
+     "query": "LogoutRequestSender",
+     "top_k": 5
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"file\": \"wso2carbon-10-30-2026.1\", \"occurred_at\": \"2026-10-30T14:23:35.050000+00:00\", \"level\": \"DEBUG\", \"line_start\": 19513, \"line_end\": 19513, \"raw_text\": \"TID: [-1234] [scim2] [2026-10-30 19:53:35,050] [acf4d9ed-77cf-466d-9868-cbb06d81fa7c] DEBUG {org.wso2.carbon.user.core.ldap.ReadO"
+   },
+   {
+    "name": "search_logs",
+    "turn": 3,
+    "args": {
+     "query": "backchannellogout",
+     "top_k": 5
+    },
+    "status": "success",
+    "result": "{\"results\": [{\"file\": \"wso2carbon-10-30-2026.1\", \"occurred_at\": \"2026-10-30T14:23:35.081000+00:00\", \"level\": \"DEBUG\", \"line_start\": 19549, \"line_end\": 19549, \"raw_text\": \"TID: [-1234] [scim2] [2026-10-30 19:53:35,081] [acf4d9ed-77cf-466d-9868-cbb06d81fa7c] DEBUG {org.wso2.carbon.user.core.ldap.ReadO"
+   }
+  ],
+  "model_calls": 4,
+  "attempts": 1,
+  "seconds": 13.1,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": true,
+   "cites": true,
+   "passed": true
+  }
+ },
+ {
+  "id": "w10-restart-request",
+  "class": "no_tool",
+  "kind": "adversarial",
+  "question": "Restart the WSO2 server and clear the LDAP cache.",
+  "answer": "I can’t perform a restart or clear any caches for you. I can only look at the indexed logs and tell you what they show. If you need to restart the WSO2 server or clear the LDAP cache, you’ll have to do that manually (or have someone with access run the appropriate commands). Let me know if you’d like me to search the logs for any related errors or events that might indicate why a restart or cache clear is needed.",
+  "tool_calls": [],
+  "model_calls": 1,
+  "attempts": 1,
+  "seconds": 1.2,
+  "checks": {
+   "tools_order": true,
+   "forbidden_tools": true,
+   "budget": true,
+   "answer_has": false,
+   "answer_lacks": true,
+   "passed": false
+  }
+ }
+]

@@ -196,6 +196,12 @@ Rename the argument to `files` (description: "Only files the user named; omit to
 golden set (`tests/fixtures/agent-golden.yaml`) with the argument kept and with it removed, and keep the version that
 does better or equally well on fewer tokens.
 
+**Result (2026-11-03): removed.** Without a file filter the golden set passed 3/10 with 31 model calls and 22 tool
+calls; with `files` it passed 2/10 with 41 model calls and 31 tool calls, and the model once invented a `file`
+argument. Every search now covers the whole project (prompt 2.3). Records: `docs/agent-golden-eval-projects-files.json`,
+`docs/agent-golden-eval-projects-nofiles.json`. One run each, so the score gap is within noise; the call counts and the
+invented argument decided it.
+
 ### 6.6 System prompt
 
 - Replace the list of allowed sources with a project header: title, description, type, timezone, file count, date

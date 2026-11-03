@@ -4,9 +4,11 @@ note and the "not run" note are enforced in code (app.agent.graph). Every model 
 short: see docs/prompt-compaction-strategy.md for why each rule is here and what was removed.
 
 Changelog
+  2.3 (2026-11-03)  No file filter: the tools always search the whole project (golden set 3/10 and 31 model calls
+                    without it, 2/10 and 41 with it; the model also invented a `file` argument).
   2.2 (2026-11-03)  One project per chat (spec 2026-11-03): a project header (title, type, timezone, file count, event
-                    span, description as data) replaces the source list; a hint per log type; files are cited and
-                    filtered by their short name, counts as (summary); group_by day for per-day questions.
+                    span, description as data) replaces the source list; a hint per log type; files are cited by
+                    their short name, counts as (summary); group_by day for per-day questions.
   2.1 (2026-11-02)  An exact citation format in the top rules: under 2.0 answers cited 【search_logs†0】-style marks
                     with no line numbers (smoke ss4, q1). Counts get their own form, (summary, source_id): without it
                     the model wrote "LINFO"/"LERROR" for summary rows and left the cause uncited (ss4).
@@ -22,7 +24,7 @@ from zoneinfo import ZoneInfo
 from app.agent.tools import SEARCH_BUDGET, SUMMARY_BUDGET
 from app.ingestion.projects import Project
 
-PROMPT_VERSION = "2.2"
+PROMPT_VERSION = "2.3"
 
 # What the model cannot see in a few hits but always needs for this log type. Empty = nothing to add.
 TYPE_HINTS: Mapping[str, str] = {
@@ -61,8 +63,7 @@ message), give the closest level count and say what it includes.
 - A file appearing in a summary is not therefore the one asked about. Explain causes with events, not counts.
 
 # Search ladder (stop once answered)
-1. Broad: the question as asked. Search the whole project: set files only if the developer named one; never pick one \
-yourself.
+1. Broad: the question as asked, across the whole project.
 2. Refine: search identifiers from the best hits verbatim (error codes, class or bean names, placeholders). Refine is \
 required for "why" questions when a hit shows a nested exception, "Caused by" or an unresolved placeholder.
 3. Surround: a narrow window (seconds) around the key event, generic query.

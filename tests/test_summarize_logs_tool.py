@@ -29,7 +29,7 @@ def test_the_tool_takes_only_filters():
     tool = make_summarize_logs_tool(project_id="demo", load_sources=lambda: ())
 
     assert tool.name == "summarize_logs"
-    assert set(tool.args) == {"files", "levels", "start_time", "end_time", "group_by"}
+    assert set(tool.args) == {"levels", "start_time", "end_time", "group_by"}
 
 
 async def test_a_failing_database_is_reported_without_internals():

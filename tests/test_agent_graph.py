@@ -312,13 +312,13 @@ async def test_build_agent_tools_only_see_the_project(tmp_path):
     from app.ingestion.sources import FileSource
 
     project = make_project("a", files=[FileSource(id="a/x", path=tmp_path / "x.log")])
-    call = {"name": "search_logs", "args": {"query": "q", "files": ["other"]}, "id": "c1", "type": "tool_call"}
+    call = {"name": "search_logs", "args": {"query": "q", "source_ids": ["b/other"]}, "id": "c1", "type": "tool_call"}
     agent = build_agent(model=script(AIMessage(content="", tool_calls=[call]), AIMessage(content="Done.")),
                         project=project)
 
     reply = await ask(agent, "why?")
 
-    assert "Unknown file 'other'" in reply.tool_calls[0].result and "['x']" in reply.tool_calls[0].result
+    assert "invalid search arguments" in reply.tool_calls[0].result and "source_ids" in reply.tool_calls[0].result
 
 
 async def test_the_coverage_note_says_how_many_more_files_are_incomplete():

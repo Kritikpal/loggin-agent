@@ -53,11 +53,9 @@ Find log events. Shows at most 5 hits, 10 with `levels`: a sample, so never coun
 
 
 class AgentFilters(TimeAndLevelFilters):
-    """The filters with short, agent-only descriptions: they go out with every model call. The model names files by
-    their short id (no project prefix): a chat sees one project, so the prefix would only cost tokens (spec §6.2).
-    The file rule sits here, where the argument is filled, on both tools (eval q5)."""
+    """The filters with short, agent-only descriptions: they go out with every model call. There is no file filter:
+    every search covers the whole project; with one, the golden set scored lower and used more calls (spec §6.5)."""
 
-    files: list[str] | None = Field(default=None, description="Only files the user named; omit for all")
     start_time: datetime | None = Field(default=None, description="UTC ISO 8601, e.g. 2026-03-10T10:14:00Z")
     end_time: datetime | None = Field(default=None, description="UTC ISO 8601")
     levels: list[str] | None = Field(default=None, description="e.g. ERROR, WARN")
@@ -91,9 +89,7 @@ def make_search_logs_tool(
         query = arguments["query"].strip() or FILTER_ONLY_QUERY
         try:
             sources = load_sources()
-            if problem := _unknown_file(arguments.get("files"), sources, project_id):
-                return _error(problem)
-            request = SearchLogsRequest(**_log_filters(arguments, project_id), query=query, top_k=min(requested, cap))
+            request = SearchLogsRequest(**_log_filters(arguments), query=query, top_k=min(requested, cap))
             async with session_factory() as session:
                 response = await search_logs(request, session, sources=sources, embed=embed)
         except Exception:
@@ -125,9 +121,7 @@ def make_summarize_logs_tool(
         group_by = arguments.get("group_by", "level")
         try:
             sources = load_sources()
-            if problem := _unknown_file(arguments.get("files"), sources, project_id):
-                return _error(problem)
-            request = LogFilters(**_log_filters(arguments, project_id))
+            request = LogFilters(**_log_filters(arguments))
             searched = searched_sources(request, sources)
             timezone = sources[0].timezone if sources else "UTC"  # one project, one timezone
             async with session_factory() as session:
@@ -177,23 +171,9 @@ def _group(row, group_by: str, project_id: str) -> dict:
     return group
 
 
-def _log_filters(arguments: dict, project_id: str) -> dict:
-    """The agent's arguments as LogFilters fields: short file names become the project's full source ids."""
-    files = arguments.get("files")
-    return {
-        "source_ids": None if files is None else [f"{project_id}/{name}" for name in files],
-        "start_time": arguments.get("start_time"), "end_time": arguments.get("end_time"),
-        "levels": arguments.get("levels"),
-    }
-
-
-def _unknown_file(files: list[str] | None, sources: tuple[Source, ...], project_id: str) -> str | None:
-    """Checked before the search, so the model only ever sees this project's short names, never a full id."""
-    known = [_short(source.id, project_id) for source in sources]
-    for name in files or ():
-        if name not in known:
-            return f"Unknown file '{name}'. Files in this project: {known}"
-    return None
+def _log_filters(arguments: dict) -> dict:
+    """The agent's time and level arguments as LogFilters fields; the files are always all of the project's."""
+    return {key: arguments.get(key) for key in ("start_time", "end_time", "levels")}
 
 
 def _short(source_id: str, project_id: str) -> str:

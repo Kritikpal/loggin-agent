@@ -94,7 +94,7 @@ def test_why_questions_search_and_counts_come_from_the_summary():
 def test_the_prompt_stays_small_because_every_model_call_resends_it():
     # docs/prompt-compaction-strategy.md: the v1 template was 5,282 chars (~1,320 tokens); every call pays it again
     assert len(PROMPT) <= 3200
-    assert PROMPT_VERSION == "2.2"
+    assert PROMPT_VERSION == "2.3"
 
 
 def test_the_agent_is_told_to_stay_within_the_logs():
@@ -114,8 +114,8 @@ def test_why_questions_must_follow_the_cause_and_first_last_questions_must_enume
 def test_the_agent_never_picks_a_file_on_its_own():
     prompt = build_system_prompt(project("a", "b"), now=NOW)
 
-    assert "Search the whole project" in prompt
-    assert "never pick one yourself" in prompt
+    assert "across the whole project" in prompt
+    assert "set files" not in prompt  # there is no file filter to set
 
 
 def test_a_refused_search_is_declared_not_run():

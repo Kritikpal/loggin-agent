@@ -34,7 +34,7 @@ def test_the_tool_takes_the_search_request_fields_and_nothing_else():
     tool = bare_tool()
 
     assert tool.name == "search_logs"
-    assert set(tool.args) == {"query", "top_k", "files", "start_time", "end_time", "levels"}
+    assert set(tool.args) == {"query", "top_k", "start_time", "end_time", "levels"}
 
 
 async def test_a_failing_database_is_reported_without_internals():
@@ -78,12 +78,12 @@ def test_the_tool_description_says_hits_are_never_a_count():
     assert "never count" in DESCRIPTION and "summarize_logs" in DESCRIPTION
 
 
-def test_both_tools_say_on_the_source_field_to_filter_only_by_sources_the_user_named():
-    # q5: the agent narrowed to a source it had only seen in a summary; the rule sits where the argument is filled
+def test_neither_tool_can_narrow_to_a_file_so_every_search_covers_the_whole_project():
+    # spec §6.5: the golden set scored better and used fewer calls without a file filter (2026-11-03 eval)
     from app.agent.tools import make_summarize_logs_tool
 
     for tool in (bare_tool(), make_summarize_logs_tool(project_id="demo", load_sources=lambda: ())):
-        assert "user named" in tool.args["files"]["description"]
+        assert "files" not in tool.args and "source_ids" not in tool.args
 
 
 async def test_a_reversed_time_range_is_explained_not_raised():
@@ -174,9 +174,7 @@ async def test_search_tool_never_sees_other_projects(tmp_path, session_factory):
     tool = make_tool(session_factory, [FileSource(id="a/x", path=tmp_path / "x.log")], project_id="a")
 
     found = await call(tool, query="pool exhausted")
-    other = await call(tool, query="pool exhausted", files=["other"])
-    full = await call(tool, query="pool exhausted", files=["a/x"])
+    narrowed = await call(tool, query="pool exhausted", source_ids=["b/other"])
 
     assert {hit["file"] for hit in found["results"]} == {"x"}
-    assert "Unknown file 'other'" in other["error"] and "['x']" in other["error"] and "/" not in other["error"]
-    assert "error" in full and "a/a/" not in full["error"]
+    assert "error" in narrowed and "source_ids" in narrowed["error"]  # no way to name another project's file
