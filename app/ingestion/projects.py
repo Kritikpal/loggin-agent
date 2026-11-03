@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 PROJECT_ID = re.compile(r"[a-z0-9][a-z0-9_.-]{0,63}")  # also the rule for a file's stem
 PROJECT_FILE = "project.yaml"
 DEFAULT_INCLUDE = "*.log*"
+LOG_EXTENSIONS = (".log", ".txt", ".json")  # dropped from a file name to make its id
 MAX_TITLE = 120
 MAX_DESCRIPTION = 300  # it is sent with every model call
 KEYS = {"title", "description", "type", "timezone", "include", "event_start", "app_packages", "field_mappings"}
@@ -80,11 +81,15 @@ def find_project(projects: tuple[Project, ...], project_id: str) -> Project:
 
 
 def _load(folder: Path) -> Project:
+    """Any failure becomes this project's error: one bad or unreadable project.yaml must never hide the others."""
     try:
         return _parse(folder, _read(folder / PROJECT_FILE))
     except ConfigError as exc:
-        logger.warning("Project %s is invalid: %s", folder.name, exc.message)
-        return Project(id=folder.name, title=folder.name, folder=folder, error=exc.message)
+        error = exc.message
+    except (OSError, ValueError, TypeError) as exc:  # unreadable file, a bad glob, a value of an unexpected type
+        error = f"{PROJECT_FILE} could not be loaded ({type(exc).__name__}): {exc}"
+    logger.warning("Project %s is invalid: %s", folder.name, error)
+    return Project(id=folder.name, title=folder.name, folder=folder, error=error)
 
 
 def _read(path: Path) -> dict[str, Any]:
@@ -104,7 +109,8 @@ def _parse(folder: Path, doc: dict[str, Any]) -> Project:
     where = f"project '{folder.name}'"
     title = _text(doc.get("title"), "title", MAX_TITLE, where, required=True)
     description = _text(doc.get("description", ""), "description", MAX_DESCRIPTION, where, required=False)
-    preset = TYPE_PRESETS.get(doc.get("type"))
+    type_name = doc.get("type")
+    preset = TYPE_PRESETS.get(type_name) if isinstance(type_name, str) else None  # a list is not hashable
     if preset is None:
         raise ConfigError(f"{where}: type must be one of {sorted(TYPE_PRESETS)}, got {doc.get('type')!r}")
     include = doc.get("include", DEFAULT_INCLUDE)
@@ -123,6 +129,16 @@ def _parse(folder: Path, doc: dict[str, Any]) -> Project:
         include=include, folder=folder, files=files, skipped=skipped)
 
 
+def file_stem(name: str) -> str:
+    """A file's id within its project: the lower-cased name minus one known log extension. Only a known extension is
+    dropped, so rotated files (app.log.1, app.log.2) keep distinct ids instead of colliding on their last suffix."""
+    lowered = name.lower()
+    for extension in LOG_EXTENSIONS:
+        if lowered.endswith(extension) and len(lowered) > len(extension):
+            return lowered[: -len(extension)]
+    return lowered
+
+
 def _text(value: Any, key: str, limit: int, where: str, *, required: bool) -> str:
     if not isinstance(value, str) or (required and not value.strip()) or len(value) > limit:
         need = "a non-empty string" if required else "a string"
@@ -138,7 +154,7 @@ def _files(folder: Path, include: str, settings: dict[str, Any]) -> tuple[tuple[
         if p.name != PROJECT_FILE and not p.name.startswith(".") and p.parent == folder and p.is_file())
     skipped, named = [], []
     for path in candidates:
-        stem = Path(path.name).stem.lower()
+        stem = file_stem(path.name)
         if not path.resolve().is_relative_to(real_folder):
             skipped.append(SkippedFile(path.name, "it links to a file outside the project folder"))
         elif not PROJECT_ID.fullmatch(stem):

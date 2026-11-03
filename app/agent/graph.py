@@ -85,6 +85,7 @@ COVERAGE_NOTES = {
 def _coverage_note(tool_calls: list[ToolCall]) -> str:
     """Said by the code, not the model: the model was told about incomplete coverage and still left it out (eval c3)."""
     statuses: dict[str, str] = {}
+    more = 0  # incomplete files the tool did not name (it names at most 10)
     for call in tool_calls:
         try:
             coverage = json.loads(call.result or "{}").get("coverage", {})
@@ -96,9 +97,12 @@ def _coverage_note(tool_calls: list[ToolCall]) -> str:
         for status in COVERAGE_NOTES:
             for name in coverage.get(status, []):
                 statuses.setdefault(name, status)
+        more = max(more, coverage.get("more", 0))
     if not statuses:
         return ""
     parts = "; ".join(f"{file}: {COVERAGE_NOTES[status]}" for file, status in statuses.items())
+    if more:
+        parts += f"; and {more} more files are not fully indexed either"
     return f"\n\n_Note on coverage: {parts}._"
 
 

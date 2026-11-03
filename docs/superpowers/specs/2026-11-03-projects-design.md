@@ -100,7 +100,7 @@ new preset row.
 
 ### File ids
 
-- `<project_id>/<stem>`, where `stem` is the file name without its last extension, lower-cased. The stem must match
+- `<project_id>/<stem>`, where `stem` is the lower-cased file name minus one known log extension (`.log`, `.txt`, `.json`), so rotated `app.log.1` and `app.log.2` keep distinct ids (revised after the final review: dropping the last suffix made them collide). The stem must match
   the same pattern as a project id (`[a-z0-9][a-z0-9_.-]{0,63}`), so a full id is at most 129 characters. The
   `SOURCE_ID` check in `sources.py` becomes "project pattern `/` stem pattern".
 - A file whose stem does not match is **skipped, not fatal**: it is not indexed, and it is listed in

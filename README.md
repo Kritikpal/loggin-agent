@@ -37,7 +37,7 @@ Run: `.venv/Scripts/python -m uvicorn app.main:app --reload`; test: `.venv/Scrip
    # overrides of the type's defaults: event_start, app_packages, field_mappings
    ```
 
-   A file's id is `<project>/<file name without its last extension>`, lower-case. A file whose name cannot become an
+   A file's id is `<project>/<lower-cased file name minus .log, .txt or .json>` (`app.log` -> `app`, `app.log.1` stays `app.log.1`). A file whose name cannot become an
    id (spaces, two files with one id) is skipped and listed as `skipped` with the reason. **Never rename a file after
    copying it in** (it would be indexed again under a new id), and copy only rotated files, never the live log.
    A broken `project.yaml` marks only that project `invalid`.

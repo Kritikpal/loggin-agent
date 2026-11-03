@@ -319,3 +319,16 @@ async def test_build_agent_tools_only_see_the_project(tmp_path):
     reply = await ask(agent, "why?")
 
     assert "Unknown file 'other'" in reply.tool_calls[0].result and "['x']" in reply.tool_calls[0].result
+
+
+async def test_the_coverage_note_says_how_many_more_files_are_incomplete():
+    async def run(**arguments) -> str:
+        return json.dumps({"groups": [], "coverage": {"files": 14, "indexed": 0, "not_indexed": ["a", "b"], "more": 12}})
+
+    tool = StructuredTool.from_function(coroutine=run, name="summarize_logs", description="fake", args_schema=LogFilters)
+    agent = build_agent(model=script(summarize("s1"), AIMessage(content="None.")), tool=fake_tool([]),
+                        summary_tool=tool, project=PROJECT)
+
+    answer = (await ask(agent, "how many errors?")).answer
+
+    assert "a: not indexed" in answer and "12 more files" in answer

@@ -52,7 +52,7 @@ def test_overrides_beat_the_preset(tmp_path):
 
 def test_include_glob_filters_files_and_project_yaml_is_never_a_file(tmp_path):
     write_project(tmp_path, "p", WSO2_YAML, "a.log", "b.log.1", "notes.txt", ".hidden.log", "prod/c.log")
-    assert [f.id for f in scan_projects(tmp_path)[0].files] == ["p/a", "p/b.log"]
+    assert [f.id for f in scan_projects(tmp_path)[0].files] == ["p/a", "p/b.log.1"]
 
 
 def test_include_can_narrow_the_files(tmp_path):
@@ -77,6 +77,9 @@ def test_folder_without_project_yaml_is_not_a_project(tmp_path):
     "title: x\ntype: wso2\nevent_start: '('\n",
     "title: [unclosed\n",
     b"\xff\xfe\x00bad",
+    "title: x\ntype: [wso2]\n",
+    "title: x\ntype: {a: 1}\n",
+    "title: x\ntype: wso2\ninclude: 7\n",
 ])
 def test_bad_yaml_marks_only_that_project_invalid(tmp_path, bad):
     write_project(tmp_path, "broken", bad, "a.log")
@@ -125,7 +128,7 @@ def test_files_that_clash_on_one_id_are_both_skipped(tmp_path):
 
 
 def test_two_extensions_clash_on_one_stem(tmp_path):
-    write_project(tmp_path, "p", WSO2_YAML, "a.log", "a.log1")
+    write_project(tmp_path, "p", WSO2_YAML + 'include: "a.*"\n', "a.log", "a.txt")
     [project] = scan_projects(tmp_path)
     assert project.files == ()
     assert len(project.skipped) == 2
@@ -167,3 +170,13 @@ def test_projects_are_sorted_by_id(tmp_path):
     for name in ("b", "a", "c"):
         write_project(tmp_path, name, WSO2_YAML)
     assert [p.id for p in scan_projects(tmp_path)] == ["a", "b", "c"]
+
+
+def test_rotated_names_keep_distinct_ids(tmp_path):
+    # logrotate/log4j naming: dropping only the last suffix gave app.log.1 and app.log.2 the same id
+    write_project(tmp_path, "p", WSO2_YAML, "app.log", "app.log.1", "app.log.2", "wso2carbon-10-30-2026.1.log")
+
+    [project] = scan_projects(tmp_path)
+
+    assert [f.id for f in project.files] == ["p/app", "p/app.log.1", "p/app.log.2", "p/wso2carbon-10-30-2026.1"]
+    assert project.skipped == ()
