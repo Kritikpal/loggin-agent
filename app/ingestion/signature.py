@@ -11,6 +11,9 @@ import hashlib
 import re
 from dataclasses import dataclass
 
+from app.ingestion.fields.resolver import resolve
+from app.ingestion.sources import SourceBase
+
 MAX_TEMPLATE = 200
 SIG_LENGTH = 8  # hex characters; thousands of kinds per project stay far from collisions
 PLACEHOLDER = "<*>"
@@ -44,6 +47,15 @@ def event_signature(*, level: str | None, logger: str | None, message: str | Non
     body = message if message else (raw_text.splitlines() or [""])[0]
     template = _template(level, logger, body)
     return Signature(hashlib.sha1(template.encode("utf-8")).hexdigest()[:SIG_LENGTH], template)
+
+
+def signature_for(text: str, source: SourceBase) -> Signature:
+    """The signature of a stored (already redacted) event: parsed as at index time, so a backfill matches indexing."""
+    try:
+        parsed = resolve(text, source).parsed
+    except Exception:  # resolve never raises by contract; an unparsed event still gets a signature
+        return event_signature(level=None, logger=None, message=None, raw_text=text)
+    return event_signature(level=parsed.level, logger=parsed.logger, message=parsed.message, raw_text=text)
 
 
 def _template(level: str | None, logger: str | None, body: str) -> str:
