@@ -20,7 +20,7 @@ from app.models import LogEvent
 from tests.search_helpers import copy_fixture, index_file, state_row
 from tests.test_assembler import lines_of
 
-FIXTURES = Path(__file__).parent / "fixtures"
+FIXTURES = Path(__file__).parent / "fixtures" / "projects" / "wso2-gateway"
 WSO2_LOGS = sorted(FIXTURES.glob("wso2carbon-*.log"))
 LOG_IDS = [path.name for path in WSO2_LOGS]
 TID_START = re.compile(r"TID: \[")

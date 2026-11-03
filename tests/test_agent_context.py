@@ -5,7 +5,7 @@ import json
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from app.agent.context import DigestSeenResults, FIRST_LINE_MAX, LAST_LINE_MAX, shorten_event
-from tests.search_helpers import DEV_AUTH_LOG, FIXTURES
+from tests.project_helpers import FIXTURE_LOGS
 
 TRACE = "java.lang.RuntimeException: Driver claims to not accept jdbcUrl " + "\tat frame\n" * 200 + "Caused by: ROOT"
 
@@ -106,7 +106,7 @@ def test_a_stack_trace_keeps_its_first_line_and_its_last_caused_by_not_the_frame
 # ---- shorten_event: one line-based rule for fresh search hits and for digests
 
 def fixture_event(name: str, first: int, last: int) -> str:
-    return "\n".join((FIXTURES / name).read_text(encoding="utf-8").splitlines()[first - 1:last])
+    return "\n".join((FIXTURE_LOGS / name).read_text(encoding="utf-8").splitlines()[first - 1:last])
 
 
 def test_a_long_first_line_is_kept_whole_with_the_root_cause_so_the_user_id_survives():

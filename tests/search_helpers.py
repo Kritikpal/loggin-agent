@@ -11,15 +11,13 @@ import os
 import random
 import re
 import shutil
-from collections.abc import AsyncIterator, Callable, Iterable, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import yaml
-from httpx import ASGITransport, AsyncClient
 
 from app.core.embeddings import EMBEDDING_DIMENSIONS
 from app.ingestion.pipeline import IndexReport, index_source
@@ -183,27 +181,3 @@ async def coverage(session_factory: Callable, source: FileSource):
 
 def hit_lines(response: Any) -> list[int]:
     return [hit.locator["line_start"] for hit in response.results]
-
-
-@asynccontextmanager
-async def api_client(
-    session_factory: Callable, sources: Sequence[FileSource],
-    embed: Callable[[str], list[float]] = fake_embed_query,
-) -> AsyncIterator[AsyncClient]:
-    """The real app with get_session / get_sources / get_embedder overridden to the test database and fakes."""
-    from app.controllers.dependencies import get_embedder, get_sources
-    from app.core.database import get_session
-    from app.main import create_app
-
-    async def test_session():
-        async with session_factory() as session:
-            yield session
-
-    app = create_app()
-    app.dependency_overrides.update({
-        get_session: test_session,
-        get_sources: lambda: tuple(sources),
-        get_embedder: lambda: embed,
-    })
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
-        yield http

@@ -7,6 +7,7 @@ from collections import Counter
 import pytest
 import yaml
 
+from tests.project_helpers import FIXTURE_LOGS
 from tests.search_helpers import FIXTURES
 
 GOLDEN = FIXTURES / "agent-golden.yaml"
@@ -15,24 +16,15 @@ KINDS = {"common", "edge", "adversarial"}
 TOOLS = {"search_logs", "summarize_logs"}
 FIELDS = {"id", "class", "kind", "question", "tools", "forbid", "answer_has", "answer_lacks", "cites", "setup", "note",
           "smoke"}
-SOURCE_FILES = {
-    "wso2-carbon-0107": "wso2carbon-01-07-2026.1.log",
-    "wso2-carbon-0114": "wso2carbon-01-14-2026.1.log",
-    "wso2-carbon-0127": "wso2carbon-01-27-2026.log",
-    "wso2-carbon-0302": "wso2carbon-03-02-2026.1.log",
-    "wso2-carbon-1028": "wso2carbon-10-28-2026.1.log",
-    "wso2-carbon-1030": "wso2carbon-10-30-2026.1.log",
-    "wso2-carbon-1101": "wso2carbon-11-01-2026.1.log",
-}
 EVENT_START = re.compile(r"^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}|TID: \[)")
 
 DATA = yaml.safe_load(GOLDEN.read_text(encoding="utf-8"))
 CASES = DATA["cases"]
 
 
-def lines_of(source_id: str) -> list[str]:
+def lines_of(file: str) -> list[str]:
     # errors="replace": two WSO2 logs contain a few bytes that are not UTF-8
-    return (FIXTURES / SOURCE_FILES[source_id]).read_text(encoding="utf-8", errors="replace").splitlines()
+    return (FIXTURE_LOGS / f"{file}.log").read_text(encoding="utf-8", errors="replace").splitlines()
 
 
 def test_ids_are_unique_and_every_class_is_covered():

@@ -12,7 +12,7 @@ from app.ingestion.projects import Project, SkippedFile
 from app.ingestion.sources import FileSource
 from tests.search_helpers import fake_embed_query
 
-FIXTURE_LOGS = Path(__file__).parent / "fixtures"  # the WSO2 test logs; one place to change when they move
+FIXTURE_LOGS = Path(__file__).parent / "fixtures" / "projects" / "wso2-gateway"  # the WSO2 test project
 SMALL_WSO2_LOG = "wso2carbon-03-02-2026.1.log"  # 97 lines: quick to index
 WSO2_YAML = "title: WSO2 API Gateway\ntype: wso2\ntimezone: Asia/Kolkata\n"
 

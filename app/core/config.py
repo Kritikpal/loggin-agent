@@ -17,7 +17,6 @@ class Settings(BaseSettings):
     groq_api_key: str | None = None
     # GROQ_API_KEY, then GROQ_API_KEY_1, _2, ... in number order; blanks and repeats dropped. Filled below.
     groq_api_keys: list[str] = Field(default_factory=list)
-    sources_config_path: Path = ROOT_DIR / "sources.yaml"  # override with SOURCES_CONFIG_PATH
     logs_root: Path = ROOT_DIR / "logs"  # one folder per project, each with a project.yaml; override with LOGS_ROOT
     groq_model: str = "openai/gpt-oss-120b"  # must support tool calling; override with GROQ_MODEL
     # a stable place for the downloaded model (the OS temp dir can be cleaned); override with EMBEDDING_CACHE_DIR

@@ -6,9 +6,7 @@
     uv run python -m scripts.eval_agent --class no_tool
     uv run python -m scripts.eval_agent --langsmith         also record an experiment in LangSmith
 
-Needs the four fixture sources from sources.yaml indexed (scripts/index_logs.py). The two setups need no database
-changes: `unindexed_source` adds a source that was never indexed, `stale_dev_auth` points dev-auth-service at a newer
-copy of its file. Paced for Groq's free tier (8,000 tokens a minute): one case at a time, a pause after each, a retry
+Needs the project (default wso2-gateway, under LOGS_ROOT) indexed (scripts/index_logs.py --project ...). Paced for Groq's free tier (8,000 tokens a minute): one case at a time, a pause after each, a retry
 after a failure. With LANGSMITH_TRACING on, questions, tool results (log text) and answers go to LangSmith: fixture
 logs only.
 """
@@ -16,55 +14,36 @@ logs only.
 import argparse
 import asyncio
 import json
-import shutil
-import tempfile
 import time
 from collections import Counter, defaultdict
 from collections.abc import Sequence
-from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
 import yaml
 
 from app.agent.graph import ask, build_agent
-from app.agent.tools import make_search_logs_tool, make_summarize_logs_tool
-from app.controllers.dependencies import get_sources
+from app.core.config import get_settings
 from app.core.database import SessionLocal
 from app.core.errors import AIUnavailableError
 from app.ingestion.coverage import time_spans
-from app.ingestion.sources import Source
+from app.ingestion.projects import Project, find_project, scan_projects
 from scripts.eval_scoring import score
 
 GOLDEN = Path("tests/fixtures/agent-golden.yaml")
+PROJECT = "wso2-gateway"
 PAUSE = 30  # seconds between cases, so the per-minute token window drains
 RETRY_WAIT = 70
 ATTEMPTS = 3
 MAX_RESULT_CHARS = 300  # of each tool result kept in the report, for debugging retrieval
-STALE_LINE = "2026-03-10 15:45:00.000 [main] ERROR o.s.boot.SpringApplication - appended after indexing\n"
 
 
-def sources_for(setup: str | None, base: tuple[Source, ...], workdir: Path) -> tuple[Source, ...]:
-    if setup == "unindexed_source":
-        demo = next(s for s in base if s.id == "demo-app")
-        return (*base, replace(demo, id="payments-api"))
-    if setup == "stale_dev_auth":
-        auth = next(s for s in base if s.id == "dev-auth-service")
-        copy = workdir / "dev-auth-service.log"
-        shutil.copyfile(auth.path, copy)  # a fresh mtime, newer than the last indexing run: coverage says "stale"
-        with copy.open("a", encoding="utf-8") as file:
-            file.write(STALE_LINE)
-        return tuple(replace(s, path=copy) if s is auth else s for s in base)
-    return base
-
-
-async def run_case(case: dict, base: tuple[Source, ...], workdir: Path) -> dict:
-    sources = sources_for(case.get("setup"), base, workdir)
+async def run_case(case: dict, project: Project) -> dict:
+    if case.get("setup"):
+        raise SystemExit(f"{case['id']}: setups are not supported since projects replaced sources.yaml")
     async with SessionLocal() as session:
-        spans = await time_spans(session, sources)
-    agent = build_agent(
-        sources=sources, spans=spans, tool=make_search_logs_tool(load_sources=lambda: sources),
-        summary_tool=make_summarize_logs_tool(load_sources=lambda: sources))
+        spans = await time_spans(session, project.files)
+    agent = build_agent(project=project, spans=spans)
     started = time.monotonic()
     for attempt in range(1, ATTEMPTS + 1):
         try:
@@ -96,17 +75,17 @@ def record(case: dict, outputs: dict) -> dict:
             **outputs, "checks": checks}
 
 
-async def run_local(cases: Sequence[dict], pause: float, workdir: Path) -> list[dict]:
-    base, results = get_sources(), []
+async def run_local(cases: Sequence[dict], pause: float, project: Project) -> list[dict]:
+    results = []
     for n, case in enumerate(cases):
-        results.append(record(case, await run_case(case, base, workdir)))
+        results.append(record(case, await run_case(case, project)))
         if n < len(cases) - 1:
             await asyncio.sleep(pause)
     return results
 
 
 async def run_langsmith(cases: Sequence[dict], all_cases: Sequence[dict], name: str, pause: float,
-                        workdir: Path) -> list[dict]:
+                        project: Project) -> list[dict]:
     from langsmith import Client, aevaluate
 
     client = Client()
@@ -117,11 +96,11 @@ async def run_langsmith(cases: Sequence[dict], all_cases: Sequence[dict], name: 
              "metadata": {"class": c["class"], "kind": c["kind"]}} for c in all_cases])
     wanted = {c["id"] for c in cases}
     examples = [e for e in client.list_examples(dataset_name=name) if e.inputs["id"] in wanted]
-    by_id, base, results = {c["id"]: c for c in cases}, get_sources(), []
+    by_id, results = {c["id"]: c for c in cases}, []
 
     async def target(inputs: dict) -> dict:
         case = by_id[inputs["id"]]
-        outputs = await run_case(case, base, workdir)
+        outputs = await run_case(case, project)
         results.append(record(case, outputs))
         await asyncio.sleep(pause)
         return outputs
@@ -167,17 +146,20 @@ async def main() -> None:
     parser.add_argument("--golden", type=Path, default=GOLDEN, help=f"golden set file (default {GOLDEN})")
     parser.add_argument("--pause", type=float, default=PAUSE, help="seconds between cases")
     parser.add_argument("--langsmith", action="store_true", help="record an experiment in LangSmith")
+    parser.add_argument("--project", default=PROJECT, help=f"project folder under LOGS_ROOT (default {PROJECT})")
     parser.add_argument("--out", type=Path, help="results file (default docs/agent-eval-golden-<time>.json)")
     args = parser.parse_args()
 
     golden = yaml.safe_load(args.golden.read_text(encoding="utf-8"))
     name = f"{args.golden.stem}-v{golden['version']}"  # LangSmith dataset; bump `version` after editing cases
     cases = select(golden["cases"], args.only, args.cls, args.smoke)
-    with tempfile.TemporaryDirectory() as tmp:
-        if args.langsmith:
-            results = await run_langsmith(cases, golden["cases"], name, args.pause, Path(tmp))
-        else:
-            results = await run_local(cases, args.pause, Path(tmp))
+    project = find_project(scan_projects(get_settings().logs_root), args.project)
+    if project.error:
+        raise SystemExit(f"project {project.id} is invalid: {project.error}")
+    if args.langsmith:
+        results = await run_langsmith(cases, golden["cases"], name, args.pause, project)
+    else:
+        results = await run_local(cases, args.pause, project)
     out = args.out or Path(f"docs/{args.golden.stem}-eval-{datetime.now():%Y%m%d-%H%M}.json")
     out.write_text(json.dumps(results, indent=1, ensure_ascii=False, default=str), encoding="utf-8")
     report(results)

@@ -1,0 +1,7 @@
+# A project: this folder plus its log files. Copy logs.example/ to logs/ and drop log files next to this file.
+title: Demo application
+description: Example project; replace with what this application does.
+type: spring-boot        # wso2 | spring-boot | logback | json
+timezone: UTC            # for timestamps without a zone
+# include: "app-*.log"   # which files count (default *.log*)
+# app_packages: [com.example]   # your own Java packages, so library frames are filtered out

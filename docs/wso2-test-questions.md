@@ -1,9 +1,9 @@
 # WSO2 test questions
 
-Manual checks for the log agent in the chat UI (http://localhost:5173), against the 7 indexed WSO2 sources
-(`wso2-carbon-0107` ... `wso2-carbon-1101`). Expected answers come from reading the log files; times are IST.
+Manual checks for the log agent in the chat UI (http://localhost:5173), against the 7 indexed files of the
+`wso2-gateway` project (`wso2carbon-01-07-2026.1` ... `wso2carbon-11-01-2026.1`). Expected answers come from reading the log files; times are IST.
 
-Check on every answer: claims cite `(source_id L<line>, <time>)`, anything unsupported is labelled a hypothesis, and
+Check on every answer: claims cite `(file L<line>, <time>)`, anything unsupported is labelled a hypothesis, and
 no e-mail address appears unredacted.
 
 | # | Question | What it tests | A good answer contains |

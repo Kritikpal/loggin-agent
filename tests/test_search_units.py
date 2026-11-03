@@ -14,7 +14,7 @@ from app.tools.keyword_query import MAX_LEXEMES, keyword_lexemes, tsquery_text
 from app.tools.search_logs import RRF_K, fuse
 from app.tools.search_queries import Candidate
 from tests.search_helpers import (
-    DEV_AUTH_ID, DEV_AUTH_LOG, api_client, copy_fixture, coverage, dev_auth_source, hit_lines, index_file, search,
+    DEV_AUTH_ID, DEV_AUTH_LOG, copy_fixture, coverage, dev_auth_source, hit_lines, index_file, search,
 )
 
 T0 = datetime(2026, 1, 1, tzinfo=UTC)
@@ -80,21 +80,6 @@ def test_no_legs_means_no_hits():
 
 
 # ---- dependencies ----
-
-def test_get_sources_reads_the_configured_file(monkeypatch, tmp_path):
-    config = tmp_path / "sources.yaml"
-    config.write_text("sources:\n  - {id: a, type: file, path: a.log}\n", encoding="utf-8")
-    monkeypatch.setattr(dependencies, "get_settings", lambda: type("S", (), {"sources_config_path": config})())
-
-    assert [s.id for s in dependencies.get_sources()] == ["a"]
-
-
-def test_get_sources_without_a_config_file_is_no_sources(monkeypatch, tmp_path):
-    missing = tmp_path / "nope.yaml"
-    monkeypatch.setattr(dependencies, "get_settings", lambda: type("S", (), {"sources_config_path": missing})())
-
-    assert dependencies.get_sources() == ()
-
 
 def test_get_embedder_is_the_real_query_embedder():
     assert dependencies.get_embedder() is embed_query

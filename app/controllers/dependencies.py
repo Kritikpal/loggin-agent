@@ -12,12 +12,6 @@ from app.core.embeddings import embed_query
 from app.core.errors import ProjectInvalidError
 from app.ingestion.coverage import time_spans
 from app.ingestion.projects import Project, find_project, scan_projects
-from app.ingestion.sources import Source, load_sources
-
-
-def get_sources() -> tuple[Source, ...]:
-    """The allowlist, read per request so edits to sources.yaml apply without a restart. A missing file = no sources."""
-    return load_sources(get_settings().sources_config_path)
 
 
 def get_projects() -> tuple[Project, ...]:

@@ -1,19 +1,20 @@
 # Golden set for the investigation agent: 10 real developer questions about the WSO2 Identity Server logs.
 # Same questions as docs/wso2-test-questions.md, written so scripts/eval_agent.py can score them.
 #
-# Sources (sources.yaml, all Asia/Kolkata = IST; facts read from the files and the index):
-#   wso2-carbon-0107  wso2carbon-01-07-2026.1.log   no ERROR, 19 WARN
-#   wso2-carbon-0114  wso2carbon-01-14-2026.1.log   18 ERROR (UserNotFound)
-#   wso2-carbon-0127  wso2carbon-01-27-2026.log     no ERROR, 3 WARN (DNS fallback, Baltimore certificate, ALERT banner)
-#   wso2-carbon-0302  wso2carbon-03-02-2026.1.log   2 ERROR "Cannot find AuthenticationResult from the cache" (L67 L68)
-#   wso2-carbon-1028  wso2carbon-10-28-2026.1.log   LDAP error 49 data 775 (L907 L1119, retries exceeded L1331),
-#                                                   e-mail 535 5.7.3 (L65 L83; recipient redacted in the index),
-#                                                   back-channel logout PKIX failure (L140)
-#   wso2-carbon-1030  wso2carbon-10-30-2026.1.log   132 ERROR: SCIM date-time parsing (from L3079), SCIM user updates
-#                                                   (from L156), privilege block, LDAP CommunicationException (L2954...);
-#                                                   7 starts (L2 L4844 L9609 L10997 L15511 L18927 L22520), 6 finished;
-#                                                   18:41 IST shutdown L9579, restart L9609, started in 218 sec L9690
-#   wso2-carbon-1101  wso2carbon-11-01-2026.1.log   LDAP CommunicationException (L22)
+# Project wso2-gateway (tests/fixtures/projects/wso2-gateway, Asia/Kolkata = IST; facts read from the files and
+# the index). Files by short id (the file name without .log):
+#   wso2carbon-01-07-2026.1  no ERROR, 19 WARN
+#   wso2carbon-01-14-2026.1  18 ERROR (UserNotFound)
+#   wso2carbon-01-27-2026    no ERROR, 3 WARN (DNS fallback, Baltimore certificate, ALERT banner)
+#   wso2carbon-03-02-2026.1  2 ERROR "Cannot find AuthenticationResult from the cache" (L67 L68)
+#   wso2carbon-10-28-2026.1  LDAP error 49 data 775 (L907 L1119, retries exceeded L1331),
+#                            e-mail 535 5.7.3 (L65 L83; recipient redacted in the index),
+#                            back-channel logout PKIX failure (L140)
+#   wso2carbon-10-30-2026.1  132 ERROR: SCIM date-time parsing (from L3079), SCIM user updates
+#                            (from L156), privilege block, LDAP CommunicationException (L2954...);
+#                            7 starts (L2 L4844 L9609 L10997 L15511 L18927 L22520), 6 finished;
+#                            18:41 IST shutdown L9579, restart L9609, started in 218 sec L9690
+#   wso2carbon-11-01-2026.1  LDAP CommunicationException (L22)
 #
 # Fields
 #   class        summary_only | summary_then_search | search_only | no_tool | beyond_tools
@@ -22,7 +23,7 @@
 #   forbid       tools that must not be called
 #   answer_has   facts the answer must contain; each item is a list of accepted spellings (case-insensitive)
 #   answer_lacks text the answer must not contain (case-insensitive)
-#   cites        {source_id: [lines]}: the answer must cite at least one of these lines
+#   cites        {file: [lines]}: the answer must cite at least one of these lines
 #   smoke        true = in the quick smoke set (one per class, run with --smoke)
 # Every run must also stay within the budgets: at most 3 search_logs and 2 summarize_logs calls.
 
@@ -36,7 +37,7 @@ cases:
     question: How many errors did WSO2 log on 30 October, and what kinds were they?
     tools: [summarize_logs, search_logs]
     answer_has: [["132"], ["date time", "date-time", "ISO_OFFSET_DATE_TIME"], ["LDAP", "keycloak"]]
-    cites: {wso2-carbon-1030: [3079, 3080, 3081, 156, 251, 537, 2954, 13157, 21969]}
+    cites: {wso2carbon-10-30-2026.1: [3079, 3080, 3081, 156, 251, 537, 2954, 13157, 21969]}
 
   - id: w2-scim-update-cause
     class: search_only
@@ -45,7 +46,7 @@ cases:
     question: Why is SCIM failing to update users on 30 October?
     tools: [search_logs]
     answer_has: [["ISO_OFFSET_DATE_TIME", "parsing date time", "date time"]]
-    cites: {wso2-carbon-1030: [3079, 3080, 3081, 156, 251, 537]}
+    cites: {wso2carbon-10-30-2026.1: [3079, 3080, 3081, 156, 251, 537]}
 
   - id: w3-ldap-connection-failures
     class: search_only
@@ -53,7 +54,7 @@ cases:
     question: Is the LDAP / Active Directory connection working? When did it fail?
     tools: [search_logs]
     answer_has: [["775", "error code 49"], ["CommunicationException"]]
-    cites: {wso2-carbon-1028: [907, 1119, 1331], wso2-carbon-1030: [2954, 13157, 21969], wso2-carbon-1101: [22]}
+    cites: {wso2carbon-10-28-2026.1: [907, 1119, 1331], wso2carbon-10-30-2026.1: [2954, 13157, 21969], wso2carbon-11-01-2026.1: [22]}
 
   - id: w4-restarts-1030
     class: beyond_tools
@@ -62,7 +63,7 @@ cases:
     question: How many times was WSO2 restarted on 30 October, and did the last startup finish?
     tools: [search_logs]
     answer_has: [["7", "seven"], ["20:09", "14:39"]]
-    cites: {wso2-carbon-1030: [2, 4844, 9609, 10997, 15511, 18927, 22520]}
+    cites: {wso2carbon-10-30-2026.1: [2, 4844, 9609, 10997, 15511, 18927, 22520]}
     note: Not a level count, so summarize_logs cannot answer it. The start at 20:09:30 IST (L22520) never logs "started".
 
   - id: w5-email-not-sent
@@ -72,7 +73,7 @@ cases:
     tools: [search_logs]
     answer_has: [["535"], ["Authentication unsuccessful", "authentication failed", "SMTP"]]
     answer_lacks: ["harapriya"]
-    cites: {wso2-carbon-1028: [65, 83]}
+    cites: {wso2carbon-10-28-2026.1: [65, 83]}
     note: The recipient's address is redacted in the index; it must never appear in the answer.
 
   - id: w6-incident-window-ist
@@ -81,7 +82,7 @@ cases:
     question: What happened around 6:40 PM IST on 30 October?
     tools: [search_logs]
     answer_has: [["18:41", "13:11"], ["218"]]
-    cites: {wso2-carbon-1030: [9579, 9609, 9690]}
+    cites: {wso2carbon-10-30-2026.1: [9579, 9609, 9690]}
     note: 18:40 IST is 13:10 UTC. Passing 18:40 as UTC finds nothing.
 
   - id: w7-auth-cache-error
@@ -90,7 +91,7 @@ cases:
     question: Users saw "Cannot find AuthenticationResult from the cache". When, and how often?
     tools: [search_logs]
     answer_has: [["2", "two"], ["16:08", "10:38"]]
-    cites: {wso2-carbon-0302: [67, 68]}
+    cites: {wso2carbon-03-02-2026.1: [67, 68]}
 
   - id: w8-no-errors-0127
     class: summary_only
@@ -107,7 +108,7 @@ cases:
     question: Why did the back-channel logout fail?
     tools: [search_logs]
     answer_has: [["PKIX"], ["ddh.solution.com"]]
-    cites: {wso2-carbon-1028: [140]}
+    cites: {wso2carbon-10-28-2026.1: [140]}
 
   - id: w10-restart-request
     class: no_tool

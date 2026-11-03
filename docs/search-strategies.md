@@ -1,6 +1,6 @@
 # Search strategies for `search_logs`
 
-How to search with the `search_logs` tool (`POST /api/v1/tools/search-logs`), written for the investigation agent that
+How to search with the `search_logs` tool (`POST /api/v1/projects/{project_id}/search-logs`), written for the investigation agent that
 will use it and for anyone testing it by hand. It describes behaviour that exists today and was measured on
 `tests/fixtures/dev-auth-service.log` (39 labelled questions, Recall@5 0.95) and `tests/fixtures/spring_boot.log`.
 

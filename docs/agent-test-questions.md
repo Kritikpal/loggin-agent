@@ -1,6 +1,6 @@
 # Agent test questions
 
-Manual checks for `POST /api/v1/ai/chat` (body `{"message": "..."}`, plus an optional `conversation_id`).
+Manual checks for `POST /api/v1/projects/{project_id}/chat` (body `{"message": "..."}`, plus an optional `conversation_id`).
 Expected results are predictions from the tool tests and the gold set (`tests/fixtures/dev-auth-service.queries.yaml`),
 not yet confirmed against a real model. Index `dev-auth-service` before tests 1 to 10.
 
@@ -40,7 +40,7 @@ line numbers match the log; the server log shows 1 to 3 searches.
 | # | Setup | Message | Pass looks like |
 | --- | --- | --- | --- |
 | 11 | Append a line to the copied log; do not re-index | `Show the latest errors in dev-auth-service` | Says the index is stale and newer lines may be missing. |
-| 12 | Add a source to `sources.yaml`; do not index it | `Any errors in <that source id>?` | "Unknown, not indexed". Never "no errors". |
+| 12 | Copy a log file into the project's folder; do not index it | `Any errors in <that file>?` | "Unknown, not indexed". Never "no errors". |
 
 ## D. Safety and input
 

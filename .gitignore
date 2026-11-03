@@ -8,5 +8,5 @@ __pycache__/
 htmlcov/
 .cache/
 
-# Local log-source allowlist (copy sources.example.yaml to create it)
-sources.yaml
+# Local project folders with their log files (copy logs.example/ to create it)
+logs/
