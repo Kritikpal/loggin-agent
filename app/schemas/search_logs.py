@@ -5,12 +5,12 @@ from typing import Any, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-class LogFilters(BaseModel):
-    """The filters search_logs and summarize_logs share, so both tools always agree on what is in scope."""
+class TimeAndLevelFilters(BaseModel):
+    """The time and level filters with their rules, shared by the API's filters and the agent's (which name files,
+    not source ids)."""
 
     model_config = ConfigDict(extra="forbid")
 
-    source_ids: list[str] | None = Field(default=None, description="Restrict to these approved log sources")
     start_time: datetime | None = Field(default=None, description="Earliest event time, ISO 8601 in UTC, e.g. 2026-03-10T10:14:00Z")
     end_time: datetime | None = Field(default=None, description="Latest event time, ISO 8601 in UTC, e.g. 2026-03-10T10:15:00Z")
     levels: list[str] | None = Field(default=None, description="ERROR, WARN, INFO, ...")
@@ -27,21 +27,17 @@ class LogFilters(BaseModel):
         return self
 
 
+class LogFilters(TimeAndLevelFilters):
+    """The filters search_logs and summarize_logs share, so both tools always agree on what is in scope."""
+
+    source_ids: list[str] | None = Field(default=None, description="Restrict to these approved log sources")
+
+
 class SearchLogsRequest(LogFilters):
     """Step 2 contract of the search_logs tool."""
 
     query: str = Field(min_length=1, max_length=2000, description="Natural-language search query")
     top_k: int = Field(default=10, ge=1, le=50, description="Maximum number of results")
-
-
-class LevelCount(BaseModel):
-    """How many events one source has at one level, and when the first and last of them happened."""
-
-    source_id: str
-    level: str | None
-    count: int
-    first_at: datetime | None
-    last_at: datetime | None
 
 
 class SearchHit(BaseModel):

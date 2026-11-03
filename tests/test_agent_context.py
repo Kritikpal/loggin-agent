@@ -11,9 +11,9 @@ TRACE = "java.lang.RuntimeException: Driver claims to not accept jdbcUrl " + "\t
 
 
 def search_result(lines: int, text: str = TRACE) -> str:
-    hit = {"source_id": "dev-auth-service", "occurred_at": "2026-03-10T10:14:08+00:00", "level": "ERROR",
+    hit = {"file": "dev-auth-service", "occurred_at": "2026-03-10T10:14:08+00:00", "level": "ERROR",
            "line_start": lines, "line_end": lines + 5, "raw_text": text, "score": 0.03, "matched_by": ["keyword"]}
-    return json.dumps({"results": [hit], "coverage": [{"source_id": "dev-auth-service", "status": "complete"}]})
+    return json.dumps({"results": [hit], "coverage": {"files": 1, "indexed": 1}})
 
 
 def turn(call_id: str, name: str = "search_logs") -> AIMessage:
@@ -44,7 +44,7 @@ def test_a_search_result_from_an_earlier_turn_becomes_a_digest_that_keeps_every_
     assert citation == "dev-auth-service L158-163 ERROR 2026-03-10T10:14:08+00:00"
     assert len(text) <= FIRST_LINE_MAX + LAST_LINE_MAX + 10
     assert text.startswith("java.lang.RuntimeException") and text.endswith("Caused by: ROOT")
-    assert digest["coverage"] == [{"source_id": "dev-auth-service", "status": "complete"}]
+    assert digest["coverage"] == {"files": 1, "indexed": 1}
     assert "digest" in digest
 
 

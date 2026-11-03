@@ -126,7 +126,10 @@ async def test_summaries_have_their_own_budget_and_do_not_use_up_searches():
 
 def coverage_tool(statuses: dict[str, str]) -> StructuredTool:
     async def run(**arguments) -> str:
-        coverage = [{"source_id": s, "status": st, "indexed_through": None} for s, st in statuses.items()]
+        coverage = {"files": len(statuses), "indexed": len(statuses)}
+        for name, status in statuses.items():
+            if status != "complete":
+                coverage.setdefault(status, []).append(name)
         return json.dumps({"groups": [], "coverage": coverage})
 
     return StructuredTool.from_function(

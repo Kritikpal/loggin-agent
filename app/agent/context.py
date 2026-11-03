@@ -47,9 +47,9 @@ def _digest(content: str) -> str | None:
     if not isinstance(data, dict) or "results" not in data or "digest" in data:
         return None
     # one line per hit: repeating JSON keys on every hit cost more than the shortened text itself
-    hits = [f"{h.get('source_id')} L{h.get('line_start')}-{h.get('line_end')} {h.get('level')} {h.get('occurred_at')} | "
+    hits = [f"{h.get('file')} L{h.get('line_start')}-{h.get('line_end')} {h.get('level')} {h.get('occurred_at')} | "
             f"{_ends(str(h.get('raw_text', '')))}" for h in data["results"]]
-    return json.dumps({"digest": DIGEST_NOTE, "hits": hits, "coverage": data.get("coverage", [])})
+    return json.dumps({"digest": DIGEST_NOTE, "hits": hits, "coverage": data.get("coverage", {})})
 
 
 def _ends(text: str) -> str:

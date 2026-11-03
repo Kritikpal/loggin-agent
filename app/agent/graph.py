@@ -40,7 +40,9 @@ def build_agent(
     sources: tuple[Source, ...] | None = None, spans: Spans | None = None,
 ) -> Agent:
     """Build the agent. Everything defaults to the real thing; tests pass a scripted model and fake tools."""
-    tools = [tool or make_search_logs_tool(), summary_tool or make_summarize_logs_tool()]
+    # ponytail: bridge until build_agent takes a project (plan Task 5): every source, ids unshortened
+    tools = [tool or make_search_logs_tool(project_id="", load_sources=get_sources),
+             summary_tool or make_summarize_logs_tool(project_id="", load_sources=get_sources)]
     return create_agent(
         model or chat_model(),
         tools,
@@ -86,15 +88,18 @@ def _coverage_note(tool_calls: list[ToolCall]) -> str:
     statuses: dict[str, str] = {}
     for call in tool_calls:
         try:
-            coverage = json.loads(call.result or "{}").get("coverage", [])
+            coverage = json.loads(call.result or "{}").get("coverage", {})
         except (ValueError, AttributeError):
             continue
-        for item in coverage:
-            if item.get("status") in COVERAGE_NOTES:
-                statuses.setdefault(item["source_id"], item["status"])
+        if not isinstance(coverage, dict):
+            continue
+        # the tools' project coverage object: {"files": n, "indexed": k, "<status>": [file, ...], "more": m}
+        for status in COVERAGE_NOTES:
+            for name in coverage.get(status, []):
+                statuses.setdefault(name, status)
     if not statuses:
         return ""
-    parts = "; ".join(f"{source}: {COVERAGE_NOTES[status]}" for source, status in statuses.items())
+    parts = "; ".join(f"{file}: {COVERAGE_NOTES[status]}" for file, status in statuses.items())
     return f"\n\n_Note on coverage: {parts}._"
 
 
