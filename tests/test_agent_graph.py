@@ -13,12 +13,15 @@ from langchain_core.messages import AIMessage
 from langchain_core.tools import StructuredTool
 
 from app.agent.graph import ask, build_agent
-from app.controllers.dependencies import get_agent
+from app.controllers.dependencies import get_agent, get_projects
 from app.core.errors import AIUnavailableError
 from app.main import create_app
 from app.schemas.chat import ToolCall
 from app.schemas.search_logs import LogFilters, SearchLogsRequest
 
+from tests.project_helpers import make_project
+
+PROJECT = make_project("demo")
 EMPTY_RESULT = '{"results": [], "coverage": []}'
 
 
@@ -53,7 +56,7 @@ def fake_tool(calls: list[str]) -> StructuredTool:
 
 
 def agent_for(messages: Iterable[AIMessage], calls: list[str]):
-    return build_agent(model=script(*messages), tool=fake_tool(calls), sources=())
+    return build_agent(model=script(*messages), tool=fake_tool(calls), project=PROJECT)
 
 
 async def test_the_agent_searches_then_answers_with_the_models_final_text():
@@ -76,7 +79,7 @@ async def test_calls_requested_together_share_a_turn_so_batching_is_visible():
         {"name": "summarize_logs", "args": {}, "id": "s1", "type": "tool_call"}])
     agent = build_agent(
         model=script(together, search("Caused by", "c2"), AIMessage(content="Done.")), tool=fake_tool(calls),
-        summary_tool=fake_summary_tool(calls), sources=())
+        summary_tool=fake_summary_tool(calls), project=PROJECT)
 
     reply = await ask(agent, "two independent parts")
 
@@ -115,7 +118,7 @@ async def test_summaries_have_their_own_budget_and_do_not_use_up_searches():
     turns = [summarize("s1"), summarize("s2"), summarize("s3"), *(search(f"q{n}", f"c{n}") for n in range(1, 4))]
     agent = build_agent(
         model=script(*turns, AIMessage(content="Done.")), tool=fake_tool(calls),
-        summary_tool=fake_summary_tool(calls), sources=())
+        summary_tool=fake_summary_tool(calls), project=PROJECT)
 
     reply = await ask(agent, "what is wrong?")
 
@@ -139,7 +142,7 @@ def coverage_tool(statuses: dict[str, str]) -> StructuredTool:
 async def test_the_answer_says_when_a_source_is_not_fully_indexed_whatever_the_model_wrote():
     agent = build_agent(
         model=script(summarize("s1"), AIMessage(content="There are 3 errors.")), tool=fake_tool([]),
-        summary_tool=coverage_tool({"a": "stale", "b": "complete", "c": "not_indexed"}), sources=())
+        summary_tool=coverage_tool({"a": "stale", "b": "complete", "c": "not_indexed"}), project=PROJECT)
 
     answer = (await ask(agent, "how many errors?")).answer
 
@@ -151,7 +154,7 @@ async def test_the_answer_says_when_a_source_is_not_fully_indexed_whatever_the_m
 async def test_complete_coverage_adds_no_note():
     agent = build_agent(
         model=script(summarize("s1"), AIMessage(content="Done.")), tool=fake_tool([]),
-        summary_tool=coverage_tool({"a": "complete"}), sources=())
+        summary_tool=coverage_tool({"a": "complete"}), project=PROJECT)
 
     assert (await ask(agent, "q")).answer == "Done."
 
@@ -175,7 +178,7 @@ async def test_an_answer_with_every_search_run_gets_no_note():
 
 
 async def test_a_failing_model_is_a_503_without_leaking_the_provider_error():
-    agent = build_agent(model=BrokenModel(messages=iter([])), tool=fake_tool([]), sources=())
+    agent = build_agent(model=BrokenModel(messages=iter([])), tool=fake_tool([]), project=PROJECT)
 
     with pytest.raises(AIUnavailableError) as raised:
         await ask(agent, "anything")
@@ -186,6 +189,7 @@ async def test_a_failing_model_is_a_503_without_leaking_the_provider_error():
 @pytest.fixture
 async def chat_client():
     app = create_app()
+    app.dependency_overrides[get_projects] = lambda: (PROJECT, make_project("broken", error="bad yaml"))
     app.dependency_overrides[get_agent] = lambda: agent_for(
         [search("HHH000342", "c1"), AIMessage(content="Agent says hi.")], [])
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
@@ -195,7 +199,7 @@ async def chat_client():
 async def test_chat_returns_the_answer_the_tool_calls_and_keeps_the_conversation_id(chat_client):
     cid = str(uuid.uuid4())
 
-    res = await chat_client.post("/api/v1/ai/chat", json={"message": "why 500?", "conversation_id": cid})
+    res = await chat_client.post("/api/v1/projects/demo/chat", json={"message": "why 500?", "conversation_id": cid})
 
     assert res.status_code == 200
     assert res.json() == {
@@ -208,7 +212,7 @@ async def test_chat_returns_the_answer_the_tool_calls_and_keeps_the_conversation
 
 @pytest.mark.parametrize("message", ["   ", "\x00\x01\x02", "\n\t "])
 async def test_chat_rejects_a_message_with_no_text(chat_client, message):
-    assert (await chat_client.post("/api/v1/ai/chat", json={"message": message})).status_code == 422
+    assert (await chat_client.post("/api/v1/projects/demo/chat", json={"message": message})).status_code == 422
 
 
 async def test_chat_strips_control_characters_before_the_agent_sees_them():
@@ -220,10 +224,11 @@ async def test_chat_strips_control_characters_before_the_agent_sees_them():
             return super()._generate(messages, *args, **kwargs)
 
     app = create_app()
+    app.dependency_overrides[get_projects] = lambda: (PROJECT,)
     app.dependency_overrides[get_agent] = lambda: build_agent(
-        model=Spy(messages=iter([AIMessage(content="ok")])), tool=fake_tool([]), sources=())
+        model=Spy(messages=iter([AIMessage(content="ok")])), tool=fake_tool([]), project=PROJECT)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
-        await http.post("/api/v1/ai/chat", json={"message": "  why\x00 500?\x1b  "})
+        await http.post("/api/v1/projects/demo/chat", json={"message": "  why\x00 500?\x1b  "})
 
     assert seen == ["why 500?"]
 
@@ -252,7 +257,7 @@ async def test_the_model_gets_earlier_results_as_digests_but_the_reply_keeps_the
     model = RecordingModel(messages=iter([search("a", "c1"), search("b", "c2"), AIMessage(content="Done.")]))
     model.seen = []
 
-    reply = await ask(build_agent(model=model, tool=tool, summary_tool=fake_summary_tool([]), sources=()), "why?")
+    reply = await ask(build_agent(model=model, tool=tool, summary_tool=fake_summary_tool([]), project=PROJECT), "why?")
 
     second_call, last_call = model.seen[1], model.seen[2]
     assert [m.content for m in second_call if m.type == "tool"] == [full]  # not read yet: full
@@ -267,7 +272,7 @@ async def test_a_tool_call_leaked_into_the_answer_text_is_run_as_a_real_call():
     leaked = AIMessage(content='18 errors so far.【assistant to=functions.search_logs<|channel|>commentary '
                                '<|constrain|>json<|message|>{"query":"UserNotFound"}')
     agent = build_agent(model=script(leaked, AIMessage(content="User 35eea954 does not exist.")),
-                        tool=fake_tool(calls), summary_tool=fake_summary_tool([]), sources=())
+                        tool=fake_tool(calls), summary_tool=fake_summary_tool([]), project=PROJECT)
 
     reply = await ask(agent, "which user?")
 
@@ -281,9 +286,36 @@ async def test_recovered_calls_still_count_against_the_search_budget():
     leak = '【assistant to=functions.search_logs<|channel|>commentary <|constrain|>json<|message|>{{"query":"q{}"}}'
     agent = build_agent(model=script(*(AIMessage(content=leak.format(n)) for n in range(1, 5)),
                                      AIMessage(content="Gave up.")),
-                        tool=fake_tool(calls), summary_tool=fake_summary_tool([]), sources=())
+                        tool=fake_tool(calls), summary_tool=fake_summary_tool([]), project=PROJECT)
 
     reply = await ask(agent, "find it")
 
     assert calls == ["q1", "q2", "q3"]
     assert [c.status for c in reply.tool_calls] == ["success", "success", "success", "error"]
+
+
+async def test_chat_on_an_unknown_project_is_404(chat_client):
+    res = await chat_client.post("/api/v1/projects/nope/chat", json={"message": "why?"})
+    assert res.status_code == 404 and res.json()["error"]["message"] == "No such project."
+
+
+async def test_chat_on_an_invalid_project_is_409(chat_client):
+    res = await chat_client.post("/api/v1/projects/broken/chat", json={"message": "why?"})
+    assert res.status_code == 409 and res.json()["error"]["code"] == "project_invalid"
+
+
+async def test_old_chat_route_is_gone(chat_client):
+    assert (await chat_client.post("/api/v1/ai/chat", json={"message": "why?"})).status_code == 404
+
+
+async def test_build_agent_tools_only_see_the_project(tmp_path):
+    from app.ingestion.sources import FileSource
+
+    project = make_project("a", files=[FileSource(id="a/x", path=tmp_path / "x.log")])
+    call = {"name": "search_logs", "args": {"query": "q", "files": ["other"]}, "id": "c1", "type": "tool_call"}
+    agent = build_agent(model=script(AIMessage(content="", tool_calls=[call]), AIMessage(content="Done.")),
+                        project=project)
+
+    reply = await ask(agent, "why?")
+
+    assert "Unknown file 'other'" in reply.tool_calls[0].result and "['x']" in reply.tool_calls[0].result

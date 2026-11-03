@@ -1,12 +1,8 @@
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated
+from fastapi import APIRouter
 
-from fastapi import APIRouter, Depends
-
-from app.agent.graph import Agent, ask
-from app.controllers.dependencies import get_agent
-from app.schemas.chat import ChatRequest, ChatResponse, Memory, ResumeRequest
+from app.schemas.chat import ChatResponse, Memory, ResumeRequest
 
 router = APIRouter(prefix="/ai", tags=["AI"])
 
@@ -17,15 +13,6 @@ MOCK_MEMORIES = [
     Memory(id=uuid.UUID(int=2), kind="observation", content="The payments service logs to /var/log/payments.log.",
            created_at=datetime(2026, 10, 29, tzinfo=UTC)),
 ]
-
-
-@router.post("/chat", response_model=ChatResponse, summary="Ask the log investigation agent")
-async def ai_chat(data: ChatRequest, agent: Annotated[Agent, Depends(get_agent)]) -> ChatResponse:
-    # ponytail: every question starts fresh; conversation_id is echoed, not remembered. Add a checkpointer when
-    # follow-up questions are needed.
-    reply = await ask(agent, data.message)
-    return ChatResponse(
-        response=reply.answer, tool_calls=reply.tool_calls, conversation_id=data.conversation_id or uuid.uuid4())
 
 
 @router.get("/memories", response_model=list[Memory], summary="List memories (mock data)")

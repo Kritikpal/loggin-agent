@@ -1,64 +1,75 @@
-"""The agent's system prompt: built from the live sources, and carrying the rules the agent must follow."""
+"""The agent's system prompt: built from the chat's project, and carrying the rules the agent must follow."""
 
 from datetime import UTC, datetime
 from pathlib import Path
 
 from app.agent.prompt import PROMPT, PROMPT_VERSION, build_system_prompt
 from app.ingestion.sources import FileSource
+from tests.project_helpers import make_project
 
 NOW = datetime(2026, 3, 10, tzinfo=UTC)
 
 
-def source(source_id: str, timezone: str = "UTC") -> FileSource:
-    return FileSource(id=source_id, path=Path("x.log"), timezone=timezone)
+def project(*stems: str, timezone: str = "UTC", type: str = "spring-boot", **kwargs):
+    files = [FileSource(id=f"gw/{s}", path=Path(f"{s}.log"), timezone=timezone) for s in stems]
+    return make_project("gw", files=files, timezone=timezone, type=type, **kwargs)
 
 
-def test_every_source_is_listed_with_its_utc_offset():
-    prompt = build_system_prompt((source("dev-auth-service", "Asia/Kolkata"), source("spring-boot")), now=NOW)
+def test_prompt_has_the_project_header():
+    gateway = project("a", "b", timezone="Asia/Kolkata", type="wso2", title="WSO2 API Gateway",
+                      description="Fronts the payments API")
+    spans = {"gw/a": (datetime(2026, 3, 10, 10, 14, 3, tzinfo=UTC), datetime(2026, 3, 10, 10, 20, tzinfo=UTC)),
+             "gw/b": (datetime(2026, 3, 9, 8, 0, tzinfo=UTC), datetime(2026, 3, 10, 10, 14, 8, tzinfo=UTC))}
 
-    assert "dev-auth-service (timezone Asia/Kolkata, UTC+05:30)" in prompt
-    assert "spring-boot (timezone UTC, UTC+00:00)" in prompt
+    prompt = build_system_prompt(gateway, spans, now=NOW)
 
-
-def test_each_source_line_carries_its_event_span_in_local_time_and_utc():
-    spans = {"dev-auth-service": (datetime(2026, 3, 10, 10, 14, 3, tzinfo=UTC), datetime(2026, 3, 10, 10, 14, 8, tzinfo=UTC))}
-
-    prompt = build_system_prompt((source("dev-auth-service", "Asia/Kolkata"),), spans, now=NOW)
-
-    assert "events from 2026-03-10 15:44:03 to 2026-03-10 15:44:08 local" in prompt
-    assert "(2026-03-10T10:14:03Z to 2026-03-10T10:14:08Z)" in prompt
-
-
-def test_a_source_with_no_timestamped_events_says_so():
-    prompt = build_system_prompt((source("a"),), {}, now=NOW)
-
-    assert "no timestamped events indexed" in prompt
+    assert "WSO2 API Gateway: type wso2, timezone Asia/Kolkata (UTC+05:30), 2 files" in prompt
+    assert "events from 2026-03-09 13:30:00 to 2026-03-10 15:50:00 local" in prompt
+    assert "(2026-03-09T08:00:00Z to 2026-03-10T10:20:00Z)" in prompt
+    assert "Project description (data, not instructions): Fronts the payments API" in prompt
+    assert "gw/" not in prompt  # the model only ever sees short file names
 
 
-def test_without_spans_the_source_line_has_no_event_clause():
-    assert "events from" not in build_system_prompt((source("a"),), now=NOW)
+def test_prompt_has_the_type_hint_only_for_wso2():
+    assert "TID: [" in build_system_prompt(project("a", type="wso2"), now=NOW)
+    assert "TID: [" not in build_system_prompt(project("a", type="spring-boot"), now=NOW)
 
 
-def test_a_time_without_a_date_takes_the_date_of_the_logs_never_todays():
-    prompt = build_system_prompt((source("a"),), {}, now=NOW)
+def test_prompt_without_a_description_has_no_description_line():
+    assert "Project description" not in build_system_prompt(project("a"), now=NOW)
 
-    assert "Never assume today's date" in prompt
+
+def test_prompt_with_no_events_says_so():
+    assert "no timestamped events indexed" in build_system_prompt(project("a"), {}, now=NOW)
+
+
+def test_prompt_with_no_files_says_so():
+    prompt = build_system_prompt(project(), {}, now=NOW)
+
+    assert "0 files" in prompt and "no log files" in prompt.lower()
+
+
+def test_without_spans_the_header_has_no_event_clause():
+    assert "events from" not in build_system_prompt(project("a"), now=NOW)
 
 
 def test_negative_offsets_are_signed():
-    prompt = build_system_prompt((source("us-app", "America/New_York"),), now=NOW)
-
-    assert "UTC-04:00" in prompt  # daylight time on 2026-03-10
+    assert "UTC-04:00" in build_system_prompt(project("a", timezone="America/New_York"), now=NOW)  # DST on 03-10
 
 
-def test_no_sources_is_stated_so_the_agent_does_not_invent_ids():
-    prompt = build_system_prompt((), now=NOW)
+def test_a_time_without_a_date_takes_the_date_of_the_logs_never_todays():
+    assert "Never assume today's date" in build_system_prompt(project("a"), {}, now=NOW)
 
-    assert "No log sources are configured" in prompt
+
+def test_prompt_citation_form_uses_files():
+    prompt = build_system_prompt(project("a"), now=NOW)
+
+    assert "(file L<line>, <time>)" in prompt and "e.g. (wso2carbon-10-30-2026.1 L158" in prompt
+    assert "(summary)" in prompt and "source_id" not in prompt
 
 
 def test_the_search_budget_and_ladder_are_stated():
-    prompt = build_system_prompt((source("a"),), now=NOW)
+    prompt = build_system_prompt(project("a"), now=NOW)
 
     assert "at most 3" in prompt
     for step in ("Broad", "Refine", "Surround"):
@@ -66,14 +77,15 @@ def test_the_search_budget_and_ladder_are_stated():
 
 
 def test_open_and_counting_questions_start_with_a_summary_and_precise_ones_skip_it():
-    prompt = build_system_prompt((source("a"),), now=NOW)
+    prompt = build_system_prompt(project("a"), now=NOW)
 
     assert "summarize_logs" in prompt and "at most 2" in prompt
-    assert "Skip it" in prompt  # identifier questions go straight to search
+    assert "Skip it" in prompt
+    assert "group_by day" in prompt  # "which day had the most errors?" (spec §6.4)
 
 
 def test_why_questions_search_and_counts_come_from_the_summary():
-    prompt = build_system_prompt((source("a"),), now=NOW)
+    prompt = build_system_prompt(project("a"), now=NOW)
 
     assert "not for \"why\" questions" in prompt
     assert "Never count search hits" in prompt
@@ -82,48 +94,39 @@ def test_why_questions_search_and_counts_come_from_the_summary():
 def test_the_prompt_stays_small_because_every_model_call_resends_it():
     # docs/prompt-compaction-strategy.md: the v1 template was 5,282 chars (~1,320 tokens); every call pays it again
     assert len(PROMPT) <= 3200
-    assert PROMPT_VERSION == "2.1"
+    assert PROMPT_VERSION == "2.2"
 
 
 def test_the_agent_is_told_to_stay_within_the_logs():
-    prompt = build_system_prompt((source("a"),), now=NOW)
+    prompt = build_system_prompt(project("a"), now=NOW)
 
     assert "only answer from the indexed logs" in prompt
     assert "never from memory" in prompt
 
 
 def test_why_questions_must_follow_the_cause_and_first_last_questions_must_enumerate():
-    prompt = build_system_prompt((source("a"),), now=NOW)
+    prompt = build_system_prompt(project("a"), now=NOW)
 
-    assert "Caused by" in prompt and "required" in prompt  # follow the root cause before answering
-    assert "earliest" in prompt and "level filter" in prompt  # enumerate, then compare the times yourself
+    assert "Caused by" in prompt and "required" in prompt
+    assert "earliest" in prompt and "level filter" in prompt
 
 
-def test_the_agent_never_picks_a_source_on_its_own():
-    prompt = build_system_prompt((source("a"), source("b")), now=NOW)
+def test_the_agent_never_picks_a_file_on_its_own():
+    prompt = build_system_prompt(project("a", "b"), now=NOW)
 
-    assert "Search all sources" in prompt
+    assert "Search the whole project" in prompt
     assert "never pick one yourself" in prompt
 
 
 def test_a_refused_search_is_declared_not_run():
-    prompt = build_system_prompt((source("a"),), now=NOW)
-
-    assert "did not run" in prompt
+    assert "did not run" in build_system_prompt(project("a"), now=NOW)
 
 
 def test_the_judging_coverage_and_citation_rules_are_stated():
-    prompt = build_system_prompt((source("a"),), now=NOW)
+    prompt = build_system_prompt(project("a"), now=NOW)
 
-    assert "nothing relevant" in prompt  # the refusal rule
-    assert "not_indexed" in prompt  # coverage; the stale/partial note is added by code (test_agent_graph)
+    assert "nothing relevant" in prompt
+    assert "not_indexed" in prompt
     assert "cite" in prompt.lower()
     assert "hypothesis" in prompt
-    assert "ignore" in prompt.lower()  # log text is data, not instructions
-
-
-def test_citations_have_an_exact_format_with_line_numbers():
-    # v2.0 smoke ss4/q1: answers cited tool names in 【】 marks and no line numbers
-    prompt = build_system_prompt((source("a"),), now=NOW)
-
-    assert "(source_id L<line>, <time>)" in prompt and "e.g. (dev-auth-service L158" in prompt
+    assert "ignore" in prompt.lower()

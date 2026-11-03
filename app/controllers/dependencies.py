@@ -42,10 +42,11 @@ def get_embedder() -> Callable[[str], list[float]]:
     return embed_query
 
 
-async def get_agent(session: Annotated[AsyncSession, Depends(get_session)]):
-    """The investigation agent, built per request so edits to sources.yaml and newly indexed events reach its prompt.
+async def get_agent(
+    project: Annotated[Project, Depends(get_usable_project)], session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """The investigation agent for one project, built per request so newly copied or indexed files reach its prompt.
     Needs GROQ_API_KEY."""
-    from app.agent.graph import build_agent  # deferred: the agent module imports get_sources from this file
+    from app.agent.graph import build_agent  # deferred: importing the agent loads the model client
 
-    sources = get_sources()
-    return build_agent(sources=sources, spans=await time_spans(session, sources))
+    return build_agent(project=project, spans=await time_spans(session, project.files))

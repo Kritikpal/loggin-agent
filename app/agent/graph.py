@@ -20,10 +20,9 @@ from app.agent.context import DigestSeenResults
 from app.agent.leaks import RecoverLeakedToolCalls
 from app.agent.prompt import Spans, build_system_prompt
 from app.agent.tools import SEARCH_BUDGET, SUMMARY_BUDGET, make_search_logs_tool, make_summarize_logs_tool
-from app.controllers.dependencies import get_sources
 from app.core.errors import AIUnavailableError
 from app.core.llm import chat_model
-from app.ingestion.sources import Source
+from app.ingestion.projects import Project
 from app.schemas.chat import ToolCall
 
 logger = logging.getLogger(__name__)
@@ -37,16 +36,16 @@ BUDGETS = {"search_logs": (SEARCH_BUDGET, "search", "searches"), "summarize_logs
 
 def build_agent(
     *, model: BaseChatModel | None = None, tool: BaseTool | None = None, summary_tool: BaseTool | None = None,
-    sources: tuple[Source, ...] | None = None, spans: Spans | None = None,
+    project: Project, spans: Spans | None = None,
 ) -> Agent:
     """Build the agent. Everything defaults to the real thing; tests pass a scripted model and fake tools."""
-    # ponytail: bridge until build_agent takes a project (plan Task 5): every source, ids unshortened
-    tools = [tool or make_search_logs_tool(project_id="", load_sources=get_sources),
-             summary_tool or make_summarize_logs_tool(project_id="", load_sources=get_sources)]
+    files = project.files  # the tools can only ever load these: that keeps the chat inside its project
+    tools = [tool or make_search_logs_tool(project_id=project.id, load_sources=lambda: files),
+             summary_tool or make_summarize_logs_tool(project_id=project.id, load_sources=lambda: files)]
     return create_agent(
         model or chat_model(),
         tools,
-        system_prompt=build_system_prompt(get_sources() if sources is None else sources, spans),
+        system_prompt=build_system_prompt(project, spans),
         middleware=[
             *(ToolCallLimitMiddleware(tool_name=t.name, run_limit=BUDGETS[t.name][0]) for t in tools),
             ContextEditingMiddleware(edits=[DigestSeenResults()]),  # ADR-003: earlier results go out as digests

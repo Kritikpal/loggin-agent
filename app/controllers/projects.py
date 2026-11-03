@@ -1,6 +1,7 @@
 """Projects: read-only views of the project folders under LOGS_ROOT, and search within one project."""
 
 import asyncio
+import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Annotated
@@ -8,11 +9,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.controllers.dependencies import get_embedder, get_project, get_projects, get_usable_project
+from app.agent.graph import Agent, ask
+from app.controllers.dependencies import get_agent, get_embedder, get_project, get_projects, get_usable_project
 from app.core.database import get_session
 from app.ingestion.coverage import coverage_for_all, file_stats, orphan_ids, time_spans
 from app.ingestion.projects import Project
 from app.ingestion.sources import FileSource
+from app.schemas.chat import ChatRequest, ChatResponse
 from app.schemas.projects import ProjectDetail, ProjectFile, ProjectSummary
 from app.schemas.search_logs import SearchLogsRequest, SearchLogsResponse
 from app.tools.search_logs import search_logs
@@ -65,6 +68,19 @@ async def search_project_logs(
     embed: Annotated[Callable[[str], list[float]], Depends(get_embedder)],
 ) -> SearchLogsResponse:
     return await search_logs(request, session, sources=project.files, embed=embed)
+
+
+@router.post("/{project_id}/chat", response_model=ChatResponse, summary="Ask the log investigation agent about a project")
+async def project_chat(
+    data: ChatRequest,
+    project: Annotated[Project, Depends(get_usable_project)],  # resolved even when a test swaps the agent
+    agent: Annotated[Agent, Depends(get_agent)],
+) -> ChatResponse:
+    # ponytail: every question starts fresh; conversation_id is echoed, not remembered. Add a checkpointer when
+    # follow-up questions are needed.
+    reply = await ask(agent, data.message)
+    return ChatResponse(
+        response=reply.answer, tool_calls=reply.tool_calls, conversation_id=data.conversation_id or uuid.uuid4())
 
 
 def _summary(project: Project, spans: Spans) -> ProjectSummary:
