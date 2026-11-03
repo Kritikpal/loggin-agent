@@ -61,7 +61,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: 'POST' | 'DELETE', path: string, body?: unknown): Promise<T> {
+async function request<T>(method: 'GET' | 'POST' | 'DELETE', path: string, body?: unknown): Promise<T> {
   let res: Response
   try {
     res = await fetch(`/api/v1${path}`, {
@@ -80,8 +80,22 @@ async function request<T>(method: 'POST' | 'DELETE', path: string, body?: unknow
   throw new ApiError(res.status, 'unreachable', `The API is not responding (HTTP ${res.status}). Is the backend running on port 8000?`)
 }
 
-export const sendChat = (message: string, conversationId: string | null) =>
-  request<ChatResponse>('POST', '/ai/chat', { message, conversation_id: conversationId })
+/** A project folder on the server (app/schemas/projects.py). An invalid one cannot be chatted with; `error` says why. */
+export interface ProjectSummary {
+  id: string
+  title: string
+  type: string
+  status: 'ok' | 'invalid'
+  file_count: number
+  indexed_from: string | null
+  indexed_to: string | null
+  error: string | null
+}
+
+export const listProjects = () => request<ProjectSummary[]>('GET', '/projects')
+
+export const sendChat = (projectId: string, message: string, conversationId: string | null) =>
+  request<ChatResponse>('POST', `/projects/${encodeURIComponent(projectId)}/chat`, { message, conversation_id: conversationId })
 
 export const resumeWorkflow = (threadId: string, decision: 'APPROVED' | 'REJECTED') =>
   request<ChatResponse>('POST', `/ai/workflows/${threadId}/resume`, { decision })

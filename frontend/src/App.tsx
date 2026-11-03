@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Badge, Box, Button, Callout, Card, Code, DataList, Flex, Heading, Skeleton, Text, TextArea } from '@radix-ui/themes'
+import { Badge, Box, Button, Callout, Card, Code, DataList, Flex, Heading, Select, Skeleton, Text, TextArea } from '@radix-ui/themes'
 import {
   CheckCircledIcon,
   CheckIcon,
@@ -14,6 +14,7 @@ import {
 } from '@radix-ui/react-icons'
 import {
   ApiError,
+  listProjects,
   resumeWorkflow,
   sendChat,
   settleConflict,
@@ -21,6 +22,7 @@ import {
   type ChatResponse,
   type ConflictChoice,
   type MemoryConflict,
+  type ProjectSummary,
   type ProposedAction,
   type ToolCall,
   type WorkflowStatus,
@@ -70,17 +72,36 @@ export default function App() {
   const [conflictStates, setConflictStates] = useState<Record<string, ConflictState>>({})
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
+  const [projects, setProjects] = useState<ProjectSummary[] | null>(null)
+  const [projectsError, setProjectsError] = useState<ApiError | null>(null)
+  const [projectId, setProjectId] = useState<string | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [turns, decisions, conflictStates])
 
+  // Projects are folders on the server; they change only when someone copies files there, so one load is enough.
+  useEffect(() => {
+    let current = true
+    listProjects()
+      .then((list) => {
+        if (!current) return
+        setProjects(list)
+        const usable = list.filter((p) => p.status === 'ok')
+        if (usable.length === 1) setProjectId(usable[0].id)
+      })
+      .catch((e) => current && setProjectsError(toApiError(e)))
+    return () => {
+      current = false
+    }
+  }, [])
+
   const patchTurn = (id: number, patch: Partial<Turn>) => setTurns((ts) => ts.map((t) => (t.id === id ? { ...t, ...patch } : t)))
 
   async function send(raw: string, retryId?: number) {
     const message = raw.trim()
-    if (!message || message.length > MAX_LEN || busy) return
+    if (!message || message.length > MAX_LEN || busy || !projectId) return
     const id = retryId ?? Date.now()
     setBusy(true)
     if (retryId) patchTurn(id, { error: undefined })
@@ -89,7 +110,7 @@ export default function App() {
       setDraft('')
     }
     try {
-      const reply = await sendChat(message, conversationId)
+      const reply = await sendChat(projectId, message, conversationId)
       setConversationId(reply.conversation_id)
       patchTurn(id, { reply })
     } catch (e) {
@@ -145,14 +166,22 @@ export default function App() {
     setDraft('')
   }
 
+  // A chat belongs to one project: switching starts a new conversation.
+  function chooseProject(id: string) {
+    if (id === projectId) return
+    newChat()
+    setProjectId(id)
+  }
+
   const tooLong = draft.length > MAX_LEN
-  const canSend = !busy && !tooLong && draft.trim().length > 0
+  const canSend = !busy && !tooLong && draft.trim().length > 0 && projectId !== null
 
   return (
     <Flex direction="column" height="100%">
       <Flex px="4" py="3" align="center" justify="between" style={{ borderBottom: '1px solid var(--gray-a5)' }}>
         <Flex align="center" gap="3">
           <Heading size="3">Sales assistant</Heading>
+          <ProjectPicker projects={projects} error={projectsError} value={projectId} disabled={busy} onChange={chooseProject} />
           {conversationId && (
             <Code size="1" variant="ghost" color="gray" title={conversationId}>
               {conversationId.slice(0, 8)}
@@ -166,7 +195,7 @@ export default function App() {
 
       <Box flexGrow="1" style={{ overflowY: 'auto' }}>
         <Box mx="auto" px="4" py="5" style={{ maxWidth: 760 }}>
-          {turns.length === 0 && <EmptyState onPick={send} disabled={busy} />}
+          {turns.length === 0 && <EmptyState onPick={send} disabled={busy || !projectId} />}
           {turns.map((turn, i) => (
             <Flex key={turn.id} direction="column" gap="3" mb="6">
               <Flex justify="end">
@@ -221,7 +250,8 @@ export default function App() {
             <Box flexGrow="1">
               <TextArea
                 aria-label="Message"
-                placeholder="Ask a question or request a campaign"
+                placeholder={projectId ? 'Ask a question or request a campaign' : 'Choose a project'}
+                disabled={!projectId}
                 rows={2}
                 value={draft}
                 color={tooLong ? 'red' : undefined}
@@ -249,6 +279,46 @@ export default function App() {
         </form>
       </Box>
     </Flex>
+  )
+}
+
+type ProjectPickerProps = {
+  projects: ProjectSummary[] | null
+  error: ApiError | null
+  value: string | null
+  disabled: boolean
+  onChange: (id: string) => void
+}
+
+/** Choose the project a chat is about. An invalid project is listed but cannot be chosen; hovering shows why. */
+function ProjectPicker({ projects, error, value, disabled, onChange }: ProjectPickerProps) {
+  if (error) {
+    return (
+      <Text size="1" color="red" title={error.message}>
+        Projects unavailable
+      </Text>
+    )
+  }
+  if (projects === null) return <Skeleton width="160px" height="24px" />
+  if (projects.length === 0) {
+    return (
+      <Text size="1" color="gray">
+        No projects on the server
+      </Text>
+    )
+  }
+  return (
+    <Select.Root value={value ?? undefined} onValueChange={onChange} disabled={disabled} size="1">
+      <Select.Trigger placeholder="Choose a project" aria-label="Project" />
+      <Select.Content>
+        {projects.map((p) => (
+          <Select.Item key={p.id} value={p.id} disabled={p.status !== 'ok'} title={p.error ?? undefined}>
+            {p.title}
+            {p.status !== 'ok' ? ' (invalid)' : ` · ${p.file_count} file${p.file_count === 1 ? '' : 's'}`}
+          </Select.Item>
+        ))}
+      </Select.Content>
+    </Select.Root>
   )
 }
 
