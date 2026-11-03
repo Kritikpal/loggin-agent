@@ -6,7 +6,10 @@ starts the stack trace. Pure, deterministic and bounded: every pattern is linear
 """
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Literal
 
 from app.ingestion.fields.model import TEXT_SOURCE, Found, Method, Provenance
 from app.ingestion.fields.text_fields import MAX_SCAN_CHARS, MAX_VALUE_CHARS, resolve_text
@@ -41,6 +44,23 @@ LAYOUTS = (  # tried in order; the first match wins
     ("spring_boot", SPRING_BOOT), ("logback_default", LOGBACK_DEFAULT), ("wso2_carbon", WSO2_CARBON),
 )
 LAYOUT_FIELDS = frozenset({"occurred_at", "level", "logger", "message"})
+
+
+@dataclass(frozen=True)
+class Preset:
+    """The parsing settings a project's `type` stands for; project.yaml may override each one."""
+
+    format: Literal["text", "json"]
+    event_start: str | None  # None = the reader's default event start
+    app_packages: tuple[str, ...] = ()
+
+
+TYPE_PRESETS: Mapping[str, Preset] = MappingProxyType({
+    "wso2": Preset("text", r"^TID: \[", ("org.wso2",)),
+    "spring-boot": Preset("text", None),
+    "logback": Preset("text", None),
+    "json": Preset("json", None),
+})
 
 # A Java frame line: "\tat pkg.Class.method(" - a dotted name directly followed by "(", so prose "at least" is no frame.
 _FRAME_LINE = re.compile(r"[ \t]*at[ \t]+(?=[^\s(]{0,1000}\.)[\w$.<>@/-]{1,1000}\(")

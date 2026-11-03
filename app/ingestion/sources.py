@@ -93,10 +93,10 @@ def _parse_source(entry: Any, number: int, base_dir: Path) -> Source:
     common: dict[str, Any] = {
         "id": source_id,
         "format": _choice(entry, "format", ("text", "json"), "text", where),
-        "event_start": _regex(entry.get("event_start"), where),
-        "timezone": _timezone(entry.get("timezone", "UTC"), where),
-        "app_packages": _packages(entry.get("app_packages", []), where),
-        "field_mappings": _mappings(entry.get("field_mappings", {}), where),
+        "event_start": parse_regex(entry.get("event_start"), where),
+        "timezone": parse_timezone(entry.get("timezone", "UTC"), where),
+        "app_packages": parse_packages(entry.get("app_packages", []), where),
+        "field_mappings": parse_mappings(entry.get("field_mappings", {}), where),
     }
     return FileSource(**common, path=_path(entry.get("path"), base_dir, where))
 
@@ -108,7 +108,7 @@ def _choice(entry: dict, key: str, allowed: tuple[str, ...], default: str, where
     return value
 
 
-def _regex(value: Any, where: str) -> re.Pattern[str] | None:
+def parse_regex(value: Any, where: str) -> re.Pattern[str] | None:
     if value is None:
         return None
     if not isinstance(value, str) or not value:
@@ -119,7 +119,7 @@ def _regex(value: Any, where: str) -> re.Pattern[str] | None:
         raise ConfigError(f"{where}: event_start is not a valid regex: {exc}") from exc
 
 
-def _timezone(value: Any, where: str) -> str:
+def parse_timezone(value: Any, where: str) -> str:
     try:
         ZoneInfo(value)
     except (ZoneInfoNotFoundError, ValueError, TypeError) as exc:
@@ -127,13 +127,13 @@ def _timezone(value: Any, where: str) -> str:
     return value
 
 
-def _packages(value: Any, where: str) -> tuple[str, ...]:
+def parse_packages(value: Any, where: str) -> tuple[str, ...]:
     if not isinstance(value, list) or not all(isinstance(p, str) and PACKAGE_NAME.fullmatch(p) for p in value):
         raise ConfigError(f"{where}: app_packages must be a list of Java package names such as com.acme")
     return tuple(value)
 
 
-def _mappings(value: Any, where: str) -> dict[str, str]:
+def parse_mappings(value: Any, where: str) -> dict[str, str]:
     valid = isinstance(value, dict) and all(isinstance(k, str) and isinstance(v, str) and k and v for k, v in value.items())
     if not valid:
         raise ConfigError(f"{where}: field_mappings must map non-empty names to non-empty strings")
