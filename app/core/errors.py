@@ -29,6 +29,13 @@ class NotFoundError(AppError):
     code = "not_found"
 
 
+class ProjectInvalidError(AppError):
+    """The project's project.yaml is broken, so it cannot be searched or chatted with until it is fixed."""
+
+    status_code = 409
+    code = "project_invalid"
+
+
 class AIUnavailableError(AppError):
     """The AI model is not configured or its provider failed."""
 

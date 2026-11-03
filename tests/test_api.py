@@ -5,7 +5,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.core.config import Settings
 from app.main import create_app
-from tests.search_helpers import api_client
+from tests.project_helpers import make_project, projects_client
 
 
 @pytest.fixture
@@ -19,10 +19,10 @@ async def test_health(client):
 
 
 @pytest.mark.integration
-async def test_search_logs_with_no_sources_configured_finds_nothing(session_factory):
+async def test_search_logs_in_a_project_with_no_files_finds_nothing(session_factory):
     body = {"query": "Why are database connections failing?", "levels": ["error", "warn"], "top_k": 5}
-    async with api_client(session_factory, []) as http:
-        res = await http.post("/api/v1/tools/search-logs", json=body)
+    async with projects_client(session_factory, (make_project("p"),)) as http:
+        res = await http.post("/api/v1/projects/p/search-logs", json=body)
     assert res.status_code == 200 and res.json() == {"results": [], "coverage": []}
 
 
@@ -33,8 +33,10 @@ async def test_search_logs_with_no_sources_configured_finds_nothing(session_fact
     {"query": "x", "start_time": "2026-10-02T00:00:00Z", "end_time": "2026-10-01T00:00:00Z"},
     {"query": "x", "unknown": 1},
 ])
-async def test_search_logs_rejects_invalid_requests(client, body):
-    assert (await client.post("/api/v1/tools/search-logs", json=body)).status_code == 422
+@pytest.mark.integration
+async def test_search_logs_rejects_invalid_requests(session_factory, body):
+    async with projects_client(session_factory, (make_project("p"),)) as http:
+        assert (await http.post("/api/v1/projects/p/search-logs", json=body)).status_code == 422
 
 
 async def test_memories_and_resume_are_mocks(client):

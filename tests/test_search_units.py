@@ -10,8 +10,6 @@ import pytest
 
 from app.controllers import dependencies
 from app.core.embeddings import embed_query
-from app.ingestion.sources import FileSource
-from app.ingestion.store import record_error
 from app.tools.keyword_query import MAX_LEXEMES, keyword_lexemes, tsquery_text
 from app.tools.search_logs import RRF_K, fuse
 from app.tools.search_queries import Candidate
@@ -110,14 +108,3 @@ def broken(query: str) -> list[float]:
 
 # ---- coverage edge cases (integration) ----
 
-@pytest.mark.integration
-async def test_the_sources_endpoint_reports_a_recorded_error(tmp_path, session_factory):
-    source = FileSource(id="broken", path=tmp_path / "broken.log")
-    async with session_factory() as s, s.begin():
-        await record_error(s, "broken", "PermissionError")
-
-    async with api_client(session_factory, [source]) as http:
-        body = (await http.get("/api/v1/sources")).json()
-
-    assert body == [{"id": "broken", "type": "file", "format": "text", "status": "error", "indexed_through": None,
-                     "last_error": "PermissionError"}]
