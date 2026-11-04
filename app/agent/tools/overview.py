@@ -12,13 +12,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from langchain_core.tools import StructuredTool
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.tools.format import coverage_line, short
 from app.agent.tools.common import (
-    TIME_HELP, Level, fitted, hidden_text, levels_from, project_timezone, severity_sql, time_window, tool,
+    END_HELP, TIME_HELP, Level, ToolArgs, fitted, hidden_text, levels_from, project_timezone, severity_sql,
+    time_window, tool,
 )
 from app.core.database import SessionLocal
 from app.ingestion.coverage import coverage_for_all
@@ -32,18 +33,19 @@ TEMPLATE_HEAD = 90  # kinds often share a long prefix ("Error while updating att
 TEMPLATE_TAIL = 40  # so the tail is kept too: that is where they differ
 _HEAD = re.compile(r"^\S+ (\{[^}]*\}) - ")  # "ERROR {Logger} - " -> "{Logger} ": the level has its own column
 
-DESCRIPTION = """\
-Count events by kind (sig), most severe then largest first, with each kind's first and last event \
-(L<line>@<time>) to cite. Start here for how many / what kinds / is anything wrong. Hidden levels are counted in \
-the header."""
+BUDGET = 1  # calls per question (the registry in app.agent.tools enforces it; the model is told in DESCRIPTION)
+
+DESCRIPTION = f"""\
+Count events by kind (sig) in a window, most severe then largest first, each kind with its first and last event \
+(L<line>@<time>) to cite. Use first for how many, what kinds, is anything wrong, first or last, and why something \
+fails: the largest error kinds are the causes to follow with find(sig). The source of counts. \
+{BUDGET} call per question."""
 
 
-class OverviewArgs(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class OverviewArgs(ToolArgs):
     start_time: datetime | None = Field(default=None, description=TIME_HELP)
-    end_time: datetime | None = Field(default=None, description=TIME_HELP)
-    min_level: Level = Field(default="INFO", description="This level and worse; DEBUG only if asked")
+    end_time: datetime | None = Field(default=None, description=END_HELP)
+    min_level: Level = Field(default="INFO", description="Lowest level counted (default INFO)")
     by_day: bool = Field(default=False, description="Also count per day")
     top: int = Field(default=DEFAULT_TOP, ge=1)  # no le: the provider would reject the call before our code runs
 

@@ -10,14 +10,15 @@ import logging
 from datetime import datetime, timedelta
 
 from langchain_core.tools import StructuredTool, ToolException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.tools.overview import Scope, level_counts, window_text
 from app.agent.tools.format import Row, coverage_line, event_rows, row_text, short
 from app.agent.tools.common import (
-    LEVEL_RANKS, TIME_HELP, Level, fitted, hidden_text, levels_from, severity_sql, time_window, tool,
+    END_HELP, LEVEL_RANKS, TIME_HELP, Level, ToolArgs, fitted, hidden_text, levels_from, severity_sql, time_window,
+    tool,
 )
 from app.core.database import SessionLocal
 from app.ingestion.coverage import coverage_for_all
@@ -33,19 +34,22 @@ REPEAT_GAP = timedelta(seconds=60)
 MAX_TEXT = 200
 LIFECYCLE = r"\y(start(ed|ing)?|shut ?down|shutting down|stopp(ed|ing)|restart(ed|ing)?)\y"  # PostgreSQL ARE
 
-DESCRIPTION = """\
-Every event of a kind (sig) or containing exact text (any case, stack traces included), oldest first, with the \
-total. With neither: the timeline of a window of at most 2 hours, repeats folded (×n until time)."""
+BUDGET = 2  # calls per question (the registry in app.agent.tools enforces it; the model is told in DESCRIPTION)
+
+DESCRIPTION = f"""\
+Events, oldest first, with the total: every event of a kind (sig) or containing exact text (any case, stack traces \
+included); with neither, the timeline of a window of at most 2 hours, repeats folded (×n until time). Use for exact \
+words, an identifier, a sig from an earlier result, or what happened at a time. The total is the count. If the \
+total is far larger than the rows shown, the text is too broad: narrow with min_level or a sig. \
+{BUDGET} calls per question."""
 
 
-class FindArgs(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    sig: str | None = Field(default=None, description="A sig copied from an earlier result")
+class FindArgs(ToolArgs):
+    sig: str | None = Field(default=None, description="From an earlier result")
     text: str | None = Field(default=None, max_length=MAX_TEXT, description="Exact words, any case")
     start_time: datetime | None = Field(default=None, description=TIME_HELP)
-    end_time: datetime | None = Field(default=None, description=TIME_HELP)
-    min_level: Level | None = Field(default=None, description="Default: none for sig/text, INFO for a window")
+    end_time: datetime | None = Field(default=None, description=END_HELP)
+    min_level: Level | None = Field(default=None, description="Only if asked for errors; failures are often WARN")
     limit: int | None = Field(default=None, ge=1, description="Default 10, 25 for a window; max 25")
 
 
@@ -62,6 +66,7 @@ def make_find_tool(project: Project) -> StructuredTool:
             raise ToolException("without sig or text, give start_time and end_time at most 2 hours apart")
         limit = min(arguments.get("limit") or (MAX_LIMIT if window else DEFAULT_LIMIT), MAX_LIMIT)
         ids = tuple(s.id for s in sources)
+        fallback = False
         try:
             async with SessionLocal() as session:
                 if sig and not await _known(session, ids, sig):
@@ -71,6 +76,10 @@ def make_find_tool(project: Project) -> StructuredTool:
                 shown = levels_from(min_level, list(by_level))
                 scope = Scope(ids, start, end, None if shown is None else tuple(shown))
                 found = await (_timeline(session, scope, limit) if window else _matches(session, scope, sig, needle, limit))
+                if not window and not found[0] and shown is not None:  # a miss under a level filter may not be absence
+                    wider = await _matches(session, Scope(ids, start, end, None), sig, needle, limit)
+                    if wider[0]:
+                        found, fallback = wider, True
                 coverage = await coverage_for_all(session, sources)
         except ToolException:
             raise
@@ -85,13 +94,16 @@ def make_find_tool(project: Project) -> StructuredTool:
         if window:
             header = f"window {window_text((start, end))} · events {sum(by_level.values())} · " \
                      f"{hidden_text(by_level, shown)} · {header}"
-        if total <= len(rows):
+        if fallback:
+            more = f", showing {len(rows)} of {total}" if total > len(rows) else ""
+            note = f"none at {min_level} or worse; these are at lower levels{more}"
+        elif total <= len(rows):
             note = None
         elif window:
             note = (f"{total - len(rows)} of {total} runs left out (every WARN and ERROR, then start/stop, then the "
                     "rest spread over the window); narrow with a shorter window or min_level WARN")
         else:
-            note = f"showing {len(rows)} of {total}; narrow by time, level or sig"
+            note = f"showing the oldest {len(rows)} of {total}; narrow by time, level or sig"
         # a size cut drops a timeline's least important tier first; elsewhere the latest rows go first
         priority = [r.tier for r in rows] if window else None
         return fitted(header, lines, note, coverage_line(coverage, project_id), what="rows", priority=priority)

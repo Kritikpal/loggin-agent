@@ -4,9 +4,9 @@ import logging
 from datetime import datetime
 
 from langchain_core.tools import StructuredTool, ToolException
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import Field, ValidationError
 
-from app.agent.tools.common import TIME_HELP, time_window, tool, validation_text
+from app.agent.tools.common import END_HELP, TIME_HELP, ToolArgs, time_window, tool, validation_text
 from app.agent.tools.format import Row, assemble, coverage_line, event_rows, row_text, short
 from app.core.database import SessionLocal
 from app.core.embeddings import embed_query
@@ -26,17 +26,20 @@ MAX_MESSAGE = 800
 MAX_CAUSE = 200
 FILTER_ONLY_QUERY = "error"  # stands in when the model searches by filter alone; the filters do the narrowing
 
-DESCRIPTION = """Events similar in meaning, when the exact words are unknown. Shows at most 5 hits, 10 with `levels`: a sample, never count them. `query`: an identifier, plain words or both; no quotes or operators. `by`: k keyword, s semantic match."""
+BUDGET = 2  # calls per question (the registry in app.agent.tools enforces it; the model is told in DESCRIPTION)
+
+DESCRIPTION = f"""\
+Events similar in meaning. Use only when the exact words are unknown; otherwise find. A sample of at most 5 hits \
+(10 with `levels`): never count them, follow a good hit with find(sig). `query`: an identifier, plain words or both, \
+no quotes or operators. `by`: k keyword, s semantic match (s alone is a weak lead). {BUDGET} calls per question."""
 
 
-class SearchArgs(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
+class SearchArgs(ToolArgs):
     # No min_length / le: the provider rejects those before our code runs; run() clamps instead.
     query: str = Field(max_length=2000, description="Search text")
     top_k: int = Field(default=TOP_K, ge=1)
     start_time: datetime | None = Field(default=None, description=TIME_HELP)
-    end_time: datetime | None = Field(default=None, description=TIME_HELP)
+    end_time: datetime | None = Field(default=None, description=END_HELP)
     levels: list[str] | None = Field(default=None, description="e.g. ERROR, WARN")
 
 

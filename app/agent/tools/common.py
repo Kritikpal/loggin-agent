@@ -11,7 +11,7 @@ from typing import Literal
 from zoneinfo import ZoneInfo
 
 from langchain_core.tools import StructuredTool, ToolException
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from app.agent.tools.format import assemble, fit
 from app.ingestion.sources import Source
@@ -20,12 +20,43 @@ from app.ingestion.sources import Source
 LEVEL_RANKS = {"TRACE": 0, "DEBUG": 1, "INFO": 2, "WARN": 3, "WARNING": 3, "ERROR": 4, "SEVERE": 4, "FATAL": 5,
                "CRITICAL": 5}
 Level = Literal["DEBUG", "INFO", "WARN", "ERROR"]
-TIME_HELP = "ISO 8601 with offset, e.g. 2026-10-30T18:35:00+05:30"
+TIME_HELP = "With seconds and offset, e.g. 2026-10-30T18:35:00+05:30"  # the provider rejects a time without seconds
+END_HELP = "Same form as start_time"
 
+
+def slim_schema(schema: dict) -> None:
+    """Drop what costs tokens in every model call and tells it nothing: defaults (the field text says them), the null
+    branch of an optional field (leaving it out is how a model says None) and additionalProperties (still enforced)."""
+    schema.pop("additionalProperties", None)
+    for prop in schema.get("properties", {}).values():
+        prop.pop("default", None)
+        branches = prop.get("anyOf", [])
+        kept = [b for b in branches if b.get("type") != "null"]
+        if len(branches) == 2 and len(kept) == 1:
+            del prop["anyOf"]
+            prop.update(kept[0])
+
+
+class ToolArgs(BaseModel):
+    """Base of every tool's arguments: unknown arguments are refused (SlimTool leaves that out of the schema)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SlimTool(StructuredTool):
+    """A tool whose schema, as the model sees it, is slim_schema of its arguments. Arguments are still validated by
+    the full model. LangChain rebuilds the argument model before sending it, so the hook has to be here."""
+
+    @property
+    def tool_call_schema(self) -> dict:  # type: ignore[override]
+        schema = self.args_schema.model_json_schema()
+        schema.pop("title", None)
+        slim_schema(schema)
+        return {**schema, "description": self.description}
 
 
 def tool(run: Callable, name: str, description: str, schema: type[BaseModel]) -> StructuredTool:
-    return StructuredTool.from_function(
+    return SlimTool.from_function(
         coroutine=run, name=name, description=description, args_schema=schema,
         handle_validation_error=lambda exc: f"error: {validation_text(exc)}",
         handle_tool_error=lambda exc: f"error: {exc}",

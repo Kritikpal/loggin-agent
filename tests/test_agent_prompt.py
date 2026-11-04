@@ -1,5 +1,6 @@
 """The agent's system prompt: built from the chat's project, and carrying the rules the agent must follow."""
 
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -58,64 +59,40 @@ def test_negative_offsets_are_signed():
 
 
 def test_a_time_without_a_date_takes_the_date_of_the_logs_never_todays():
-    assert "Never assume today's date" in build_system_prompt(project("a"), {}, now=NOW)
+    prompt = build_system_prompt(project("a"), {}, now=NOW)
+
+    assert "never today's" in prompt and "ask which" in prompt
 
 
-def test_prompt_citation_form_uses_files():
+def test_prompt_citation_form_uses_files_and_counts_use_the_sig():
     prompt = build_system_prompt(project("a"), now=NOW)
 
     assert "(file L<line>, <time>)" in prompt and "e.g. (wso2carbon-10-30-2026.1 L158" in prompt
-    assert "(summary)" in prompt and "source_id" not in prompt
+    assert "(sig 7dcd9c77)" in prompt and "source_id" not in prompt
 
 
-def test_the_search_budget_and_ladder_are_stated():
+def test_the_prompt_names_no_tool_because_the_tool_descriptions_say_when_to_use_them():
     prompt = build_system_prompt(project("a"), now=NOW)
 
-    assert "at most 3" in prompt
-    for step in ("Broad", "Refine", "Surround"):
-        assert step in prompt
+    for name in ("overview", "find", "search_logs", "summarize_logs"):
+        assert not re.search(rf"\b{name}\b", prompt)  # "finding" is fine
 
 
-def test_open_and_counting_questions_start_with_a_summary_and_precise_ones_skip_it():
-    prompt = build_system_prompt(project("a"), now=NOW)
-
-    assert "summarize_logs" in prompt and "at most 2" in prompt
-    assert "Skip it" in prompt
-    assert "group_by day" in prompt  # "which day had the most errors?" (spec §6.4)
-
-
-def test_why_questions_search_and_counts_come_from_the_summary():
-    prompt = build_system_prompt(project("a"), now=NOW)
-
-    assert "not for \"why\" questions" in prompt
-    assert "Never count search hits" in prompt
+def test_counts_come_from_tool_totals_never_from_sampled_hits():
+    assert "never count sampled hits" in build_system_prompt(project("a"), now=NOW)
 
 
 def test_the_prompt_stays_small_because_every_model_call_resends_it():
     # docs/prompt-compaction-strategy.md: the v1 template was 5,282 chars (~1,320 tokens); every call pays it again
-    assert len(PROMPT) <= 3200
-    assert PROMPT_VERSION == "2.3"
+    assert len(PROMPT) <= 2300
+    assert PROMPT_VERSION == "4.1"
 
 
 def test_the_agent_is_told_to_stay_within_the_logs():
     prompt = build_system_prompt(project("a"), now=NOW)
 
-    assert "only answer from the indexed logs" in prompt
+    assert "Answer only from the indexed logs" in prompt
     assert "never from memory" in prompt
-
-
-def test_why_questions_must_follow_the_cause_and_first_last_questions_must_enumerate():
-    prompt = build_system_prompt(project("a"), now=NOW)
-
-    assert "Caused by" in prompt and "required" in prompt
-    assert "earliest" in prompt and "level filter" in prompt
-
-
-def test_the_agent_never_picks_a_file_on_its_own():
-    prompt = build_system_prompt(project("a", "b"), now=NOW)
-
-    assert "across the whole project" in prompt
-    assert "set files" not in prompt  # there is no file filter to set
 
 
 def test_a_refused_search_is_declared_not_run():
@@ -130,3 +107,16 @@ def test_the_judging_coverage_and_citation_rules_are_stated():
     assert "cite" in prompt.lower()
     assert "hypothesis" in prompt
     assert "ignore" in prompt.lower()
+
+
+def test_a_question_naming_something_in_the_logs_is_searched_before_it_is_called_absent():
+    prompt = build_system_prompt(project("a"), now=NOW)
+
+    assert "search before saying anything is absent" in prompt
+    assert "Off-topic (weather, people, other tasks)" in prompt
+
+
+def test_what_the_logs_cannot_show_gets_two_labelled_sentences_at_most():
+    prompt = build_system_prompt(project("a"), now=NOW)
+
+    assert 'at most two sentences under "Not from the logs:"' in prompt
