@@ -17,7 +17,7 @@ import yaml
 from app.core.errors import NotFoundError
 from app.ingestion.fields.text_layouts import TYPE_PRESETS
 from app.ingestion.sources import (
-    ConfigError, FileSource, parse_mappings, parse_packages, parse_regex, parse_timezone,
+    ConfigError, FileSource, PushSource, Source, parse_mappings, parse_packages, parse_regex, parse_timezone,
 )
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,12 @@ DEFAULT_INCLUDE = "*.log*"
 LOG_EXTENSIONS = (".log", ".txt", ".json")  # dropped from a file name to make its id
 MAX_TITLE = 120
 MAX_DESCRIPTION = 300  # it is sent with every model call
-KEYS = {"title", "description", "type", "timezone", "include", "event_start", "app_packages", "field_mappings"}
+KEYS = {
+    "title", "description", "type", "timezone", "include", "event_start", "app_packages", "field_mappings",
+    "push_token_env",
+}
+TOKEN_ENV = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
+PUSH_STEM = "push"  # the file id reserved for the push source
 NOT_FOUND = "No such project."
 
 
@@ -50,6 +55,12 @@ class Project:
     files: tuple[FileSource, ...] = ()
     skipped: tuple[SkippedFile, ...] = ()
     error: str | None = None
+    push_source: PushSource | None = None
+
+    @property
+    def sources(self) -> tuple[Source, ...]:
+        """Everything searchable in this project: its files, then the push source if it has one."""
+        return (*self.files, *([self.push_source] if self.push_source else []))
 
     @property
     def status(self) -> Literal["ok", "invalid"]:
@@ -123,10 +134,20 @@ def _parse(folder: Path, doc: dict[str, Any]) -> Project:
         "app_packages": parse_packages(doc.get("app_packages", list(preset.app_packages)), where),
         "field_mappings": parse_mappings(doc.get("field_mappings", {}), where),
     }
-    files, skipped = _files(folder, include, settings)
+    token_env = _token_env(doc.get("push_token_env"), where)
+    files, skipped = _files(folder, include, settings, reserve_push=token_env is not None)
+    push = PushSource(id=f"{folder.name}/{PUSH_STEM}", token_env=token_env, **settings) if token_env else None
     return Project(
         id=folder.name, title=title, description=description, type=doc["type"], timezone=settings["timezone"],
-        include=include, folder=folder, files=files, skipped=skipped)
+        include=include, folder=folder, files=files, skipped=skipped, push_source=push)
+
+
+def _token_env(value: Any, where: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not TOKEN_ENV.fullmatch(value):
+        raise ConfigError(f"{where}: push_token_env must match {TOKEN_ENV.pattern} (an environment variable name)")
+    return value
 
 
 def file_stem(name: str) -> str:
@@ -146,7 +167,9 @@ def _text(value: Any, key: str, limit: int, where: str, *, required: bool) -> st
     return value.strip()
 
 
-def _files(folder: Path, include: str, settings: dict[str, Any]) -> tuple[tuple[FileSource, ...], tuple[SkippedFile, ...]]:
+def _files(
+    folder: Path, include: str, settings: dict[str, Any], *, reserve_push: bool = False,
+) -> tuple[tuple[FileSource, ...], tuple[SkippedFile, ...]]:
     """The project's log files: regular, non-hidden files matching `include`, directly in the folder. Never recursive."""
     real_folder = folder.resolve()
     candidates = sorted(
@@ -157,6 +180,8 @@ def _files(folder: Path, include: str, settings: dict[str, Any]) -> tuple[tuple[
         stem = file_stem(path.name)
         if not path.resolve().is_relative_to(real_folder):
             skipped.append(SkippedFile(path.name, "it links to a file outside the project folder"))
+        elif reserve_push and stem == PUSH_STEM:
+            skipped.append(SkippedFile(path.name, f"the id '{PUSH_STEM}' is reserved for pushed logs"))
         elif not PROJECT_ID.fullmatch(stem):
             skipped.append(SkippedFile(path.name, f"the file name (without extension) must match {PROJECT_ID.pattern}"))
         else:

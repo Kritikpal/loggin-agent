@@ -35,7 +35,15 @@ class FileSource(SourceBase):
     path: Path
 
 
-Source = FileSource
+@dataclass(frozen=True, kw_only=True)
+class PushSource(SourceBase):
+    """Logs a project's applications push to the ingest endpoint. `token_env` names the environment variable that
+    holds the bearer token, so the secret itself is never kept on the project."""
+
+    token_env: str
+
+
+Source = FileSource | PushSource
 
 
 def get_source(sources: tuple[Source, ...], source_id: str) -> Source:

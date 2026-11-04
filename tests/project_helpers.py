@@ -9,7 +9,7 @@ from pathlib import Path
 from httpx import ASGITransport, AsyncClient
 
 from app.ingestion.projects import Project, SkippedFile
-from app.ingestion.sources import FileSource
+from app.ingestion.sources import FileSource, PushSource
 from tests.search_helpers import fake_embed_query
 
 FIXTURE_LOGS = Path(__file__).parent / "fixtures" / "projects" / "wso2-gateway"  # the WSO2 test project
@@ -20,10 +20,12 @@ WSO2_YAML = "title: WSO2 API Gateway\ntype: wso2\ntimezone: Asia/Kolkata\n"
 def make_project(
     project_id: str = "demo", *, files: Sequence[FileSource] = (), type: str = "wso2", timezone: str = "UTC",
     title: str | None = None, description: str = "", error: str | None = None, skipped: Sequence[SkippedFile] = (),
+    push_source: PushSource | None = None,
 ) -> Project:
     return Project(
         id=project_id, title=title or project_id, description=description, type=type, timezone=timezone,
-        folder=Path(project_id), files=tuple(files), skipped=tuple(skipped), error=error)
+        folder=Path(project_id), files=tuple(files), skipped=tuple(skipped), error=error,
+        push_source=push_source)
 
 
 def make_project_folder(root: Path, project_id: str, yaml_text: str = WSO2_YAML, *fixtures: str) -> Path:
