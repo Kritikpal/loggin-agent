@@ -65,6 +65,34 @@ fills it later.
 keys, emails, card numbers) are redacted before anything is parsed, stored or embedded, and no LLM is involved in
 indexing. Errors are recorded by exception class name only, never with log content.
 
+## Pushing logs
+
+An application can send its logs here instead of having files copied in. Add one line to the project's `project.yaml`
+and set that environment variable (in `.env`) to a long random token:
+
+```yaml
+push_token_env: ACME_PUSH_TOKEN      # name of the environment variable that holds this project's bearer token
+```
+
+```
+curl -X POST http://localhost:8000/api/v1/projects/wso2-gateway/ingest \
+  -H "Authorization: Bearer $ACME_PUSH_TOKEN" -H "Content-Type: application/json" \
+  -d '[{"message": "TID: [-1234] [] [2026-11-04 10:00:00,123] ERROR {org.acme.Pool} - pool exhausted"},
+       {"message": "payment failed", "timestamp": "2026-11-04T10:00:05Z", "level": "error"}]'
+```
+
+The body is a JSON list of events (or NDJSON with `Content-Type: application/x-ndjson`); `message` is required,
+`timestamp` (ISO 8601; no zone = the project's timezone) and `level` are optional. The reply is
+`{"received": 2, "stored": 2, "duplicates": 0}`. Limits: 1 MiB and 1000 events per request (`413` above that);
+`401` for a missing or wrong token; `404` for an unknown project, a project without `push_token_env`, or an unset
+variable; `409` for an invalid project; `422` for a malformed body; `503` when the database is down (retry).
+
+**Duplicates:** an event is identified by its redacted text plus the sender's `timestamp`, so a retried or overlapping
+batch stores nothing twice; two truly identical events with the same timestamp collapse into one. Pushed events are
+stored at once and searchable by keyword immediately; a loop inside the app adds their embeddings every
+`PUSH_EMBED_INTERVAL_SECONDS` (default 5). They appear in the project's files list as `push`. Send the token over
+HTTPS (put the app behind TLS); `push` is a reserved file id for projects that enable this.
+
 ## Searching logs
 
 `POST /api/v1/projects/{project_id}/search-logs` (read-only; no LLM):
