@@ -37,4 +37,4 @@ async def get_agent(
     Needs GROQ_API_KEY."""
     from app.agent.graph import build_agent  # deferred: importing the agent loads the model client
 
-    return build_agent(project=project, spans=await time_spans(session, project.files))
+    return build_agent(project=project, spans=await time_spans(session, project.sources))

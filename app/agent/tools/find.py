@@ -54,7 +54,7 @@ class FindArgs(ToolArgs):
 
 
 def make_find_tool(project: Project) -> StructuredTool:
-    sources, project_id = project.files, project.id  # only the project's files: that keeps a chat inside its project
+    sources, project_id = project.sources, project.id  # only the project's sources: that keeps a chat inside its project
 
     async def run(**arguments) -> str:
         sig, needle = (arguments.get("sig") or "").strip().lower(), (arguments.get("text") or "").strip()

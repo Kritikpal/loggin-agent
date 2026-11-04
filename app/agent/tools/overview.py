@@ -75,7 +75,7 @@ class Scope:
 
 def make_overview_tool(project: Project) -> StructuredTool:
     """Only the project's files are counted. Days are counted in the project's timezone."""
-    sources, project_id = project.files, project.id
+    sources, project_id = project.sources, project.id
 
     async def run(**arguments) -> str:
         start, end = time_window(arguments, sources)

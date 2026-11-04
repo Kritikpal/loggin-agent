@@ -27,7 +27,7 @@ async def list_projects(
     session: Annotated[AsyncSession, Depends(get_session)],
     projects: Annotated[tuple[Project, ...], Depends(get_projects)],
 ) -> list[ProjectSummary]:
-    spans = await time_spans(session, [f for p in projects for f in p.files])
+    spans = await time_spans(session, [s for p in projects for s in p.sources])
     return [_summary(project, spans) for project in projects]
 
 
@@ -35,7 +35,7 @@ async def list_projects(
 async def get_project_detail(
     session: Annotated[AsyncSession, Depends(get_session)], project: Annotated[Project, Depends(get_project)],
 ) -> ProjectDetail:
-    summary = _summary(project, await time_spans(session, project.files))
+    summary = _summary(project, await time_spans(session, project.sources))
     return ProjectDetail(
         **summary.model_dump(), description=project.description, timezone=project.timezone, include=project.include)
 
@@ -46,12 +46,14 @@ async def list_files(
 ) -> list[ProjectFile]:
     missing = await orphan_ids(session, project)
     coverage = await coverage_for_all(session, project.files)
-    stats = await file_stats(session, [*(f.id for f in project.files), *missing])
+    stats = await file_stats(session, [*(s.id for s in project.sources), *missing])
     disk = await asyncio.to_thread(lambda: [_stat(f) for f in project.files])
     rows = [
         _file_row(source.id, source.path.name, c.status, c.last_error, stats.get(source.id), size, mtime)
         for source, c, (size, mtime) in zip(project.files, coverage, disk)
     ]
+    if push := project.push_source:
+        rows.append(_file_row(push.id, "push", "complete", None, stats.get(push.id), None, None))
     rows += [_file_row(f"{project.id}/{s.name}", s.name, "skipped", s.reason, None, None, None) for s in project.skipped]
     rows += [_file_row(i, _short(i), "missing", None, stats.get(i), None, None) for i in missing]
     return rows
@@ -71,7 +73,7 @@ async def project_chat(
 
 
 def _summary(project: Project, spans: Spans) -> ProjectSummary:
-    mine = [spans[f.id] for f in project.files if f.id in spans]
+    mine = [spans[s.id] for s in project.sources if s.id in spans]
     return ProjectSummary(
         id=project.id, title=project.title, type=project.type, status=project.status, file_count=len(project.files),
         indexed_from=min((s for s, _ in mine), default=None), indexed_to=max((e for _, e in mine), default=None),

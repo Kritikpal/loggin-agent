@@ -20,7 +20,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ingestion.readers.base import Cursor
-from app.ingestion.sources import Source
+from app.ingestion.sources import PushSource, Source
 from app.models.log_event import LogEvent, SourceIndexState
 from app.schemas.search_logs import SourceCoverage
 
@@ -39,7 +39,7 @@ async def coverage_for_all(session: AsyncSession, sources: Sequence[Source]) -> 
     states = {row.source_id: row for row in rows}
     # stat() blocks on the disk (or a network share), so the whole batch runs in one worker thread.
     files = await asyncio.to_thread(lambda: [_stat(source) for source in sources])
-    return [_status(source, states.get(source.id), file) for source, file in zip(sources, files)]
+    return [_coverage(source, states.get(source.id), file) for source, file in zip(sources, files)]
 
 
 async def time_spans(session: AsyncSession, sources: Sequence[Source]) -> dict[str, tuple[datetime, datetime]]:
@@ -75,7 +75,7 @@ async def file_stats(session: AsyncSession, source_ids: Sequence[str]) -> dict[s
 
 async def orphan_ids(session: AsyncSession, project: "Project") -> list[str]:
     """Ids indexed under this project whose file is gone. autoescape: '_' in a project id is not a LIKE wildcard."""
-    known = [source.id for source in project.files]
+    known = [source.id for source in project.sources]
     rows = await session.scalars(
         select(SourceIndexState.source_id)
         .where(SourceIndexState.source_id.startswith(f"{project.id}/", autoescape=True),
@@ -85,10 +85,18 @@ async def orphan_ids(session: AsyncSession, project: "Project") -> list[str]:
 
 
 def _stat(source: Source) -> os.stat_result | None:
+    if isinstance(source, PushSource):
+        return None
     try:
         return source.path.stat()
     except OSError:
         return None
+
+
+def _coverage(source: Source, state: SourceIndexState | None, file: os.stat_result | None) -> SourceCoverage:
+    if isinstance(source, PushSource):  # pushed logs have no file that could fall behind: what arrived is indexed
+        return SourceCoverage(source_id=source.id, status="complete", indexed_through=None)
+    return _status(source, state, file)
 
 
 def _status(source: Source, state: SourceIndexState | None, file: os.stat_result | None) -> SourceCoverage:

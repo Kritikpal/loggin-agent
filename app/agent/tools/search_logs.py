@@ -44,7 +44,7 @@ class SearchArgs(ToolArgs):
 
 
 def make_search_logs_tool(project: Project) -> StructuredTool:
-    sources = project.files  # only the project's files: that is what keeps a chat inside its project
+    sources = project.sources  # only the project's sources: that is what keeps a chat inside its project
 
     async def run(**arguments) -> str:
         requested = arguments.get("top_k", TOP_K)
