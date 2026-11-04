@@ -1,17 +1,27 @@
+import asyncio
+import contextlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
 from app.controllers.router import api_router
-from app.core.database import engine
+from app.core.config import get_settings
+from app.core.database import SessionLocal, engine
 from app.core.errors import register_exception_handlers
+from app.ingestion.embed_loop import run_embed_loop
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    yield
-    await engine.dispose()
+    embedder = asyncio.create_task(run_embed_loop(SessionLocal, interval=get_settings().push_embed_interval_seconds))
+    try:
+        yield
+    finally:
+        embedder.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await embedder
+        await engine.dispose()
 
 
 def create_app() -> FastAPI:
