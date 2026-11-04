@@ -1,0 +1,137 @@
+[
+ {
+  "id": "w32-logout-failure-repeat",
+  "class": "search_only",
+  "kind": "common",
+  "question": "Why did the back-channel logout fail, and has it happened more than once?",
+  "answer": "The back‑channel logout failed because the server could not establish a TLS connection to the logout endpoint – the request raised an **SSLHandshakeException** with a *PKIX path building failed* error, meaning the certificate chain for `https://ddh.solution.com/home` could not be validated (unable to find a valid certification path) (wso2carbon-10-28-2026.1 L140, 09:04:30Z).\n\nThe logs contain only a single occurrence of this error; the count for this error signature is 1 (wso2carbon-10-28-2026.1 L140, 09:04:30Z).  \n\n**Not from the logs:** The failure is not due to application logic but to the missing/trusted certificate for the logout URL. Ensure the target’s certificate is imported into the truststore used by the WSO2 server.",
+  "tool_calls": [
+   {
+    "name": "search_logs",
+    "turn": 1,
+    "args": {
+     "end_time": "2026-11-01T14:47:33Z",
+     "query": "back-channel logout",
+     "start_time": "2026-01-07T06:19:19Z",
+     "top_k": 20
+    },
+    "status": "success",
+    "result": "hits 5 · shown 5 · columns: file time line level sig by text\nwso2carbon-10-30-2026.1 10-30T12:36:08Z L6034 DEBUG 684441b1 s Requesting attribute :lastLogonTime\nwso2carbon-10-28-2026.1 10-28T09:04:30Z L140 ERROR 096660bd k Error sending logout requests to: https://ddh.solution.com/home javax.net.ssl."
+   },
+   {
+    "name": "overview",
+    "turn": 2,
+    "args": {
+     "end_time": "2026-11-01T14:47:33Z",
+     "min_level": "ERROR",
+     "sig": "096660bd",
+     "start_time": "2026-01-07T06:19:19Z"
+    },
+    "status": "error",
+    "result": "error: invalid arguments: sig: Extra inputs are not permitted"
+   },
+   {
+    "name": "find",
+    "turn": 3,
+    "args": {
+     "end_time": "2026-11-01T14:47:33Z",
+     "limit": 25,
+     "min_level": "ERROR",
+     "sig": "096660bd",
+     "start_time": "2026-01-07T06:19:19Z"
+    },
+    "status": "success",
+    "result": "file wso2carbon-10-28-2026.1 · day 2026-10-28 · total 1 · shown 1 · columns: time line level sig text\n09:04:30Z L140 ERROR 096660bd Error sending logout requests to: https://ddh.solution.com/home javax.net.ssl.SSLHandshakeException: PKIX path building failed: sun.security.provider.certpath.SunCertPa"
+   },
+   {
+    "name": "search_logs",
+    "turn": 4,
+    "args": {
+     "end_time": "2026-11-01T14:47:33Z",
+     "query": "logout requests",
+     "start_time": "2026-01-07T06:19:19Z",
+     "top_k": 20
+    },
+    "status": "success",
+    "result": "hits 5 · shown 5 · columns: file time line level sig by text\nwso2carbon-10-30-2026.1 10-30T12:36:12Z L6258 DEBUG 684441b1 s Requesting attribute :lastLogonTime\nwso2carbon-10-28-2026.1 10-28T09:04:30Z L140 ERROR 096660bd k Error sending logout requests to: https://ddh.solution.com/home javax.net.ssl."
+   }
+  ],
+  "model_calls": 5,
+  "attempts": 1,
+  "seconds": 9.7,
+  "checks": {
+   "tools_order": true,
+   "model_calls": false,
+   "budget": true,
+   "answer_has": true,
+   "cites": true,
+   "passed": false
+  }
+ },
+ {
+  "id": "w33-circuit-breaker-open",
+  "class": "search_only",
+  "kind": "common",
+  "question": "What does \"LDAP connection circuit breaker is in open state\" mean, and how long before WSO2 retries?",
+  "answer": "**Finding**  \nThe logs show that when WSO2 cannot obtain an LDAP connection it trips a *circuit‑breaker*. The breaker is set to **open** after the maximum number of immediate retries (2) is exceeded, and while it is open further connection attempts are blocked until the configured “open duration” expires.\n\n* Example of the breaker being set to open:  \n  `LDAP connection circuit breaker state set to: open` (wso2carbon-10-30-2026.1 L22983, 2026‑10‑30T14:41:58Z).  \n\n* The configured open‑state timeout is logged when a request is made while the breaker is open:  \n  `circuit breaker open duration: 172288623ms` (wso2carbon-11-01-2026.1 L21, 2026‑11‑01T14:41:48Z).  \n  172 288 623 ms ≈ **47.9 hours** (≈ 2 days).  \n\n* After the breaker opens, WSO2 still performs a limited number of immediate retry attempts before giving up:  \n  `Hence, retry attempt to recover LDAP connection: 1` (wso2carbon-10-30-2026.1 L23196, 2026‑10‑30T14:42:40Z)  \n  `Hence, retry attempt to recover LDAP connection: 2` (wso2carbon-10-30-2026.1 L23400, 2026‑10‑30T14:50:19Z)  \n  When the retry count exceeds the maximum (2) it logs:  \n  `Retry count exceeds above the maximum count: 2 and failed for LDAP connection` (wso2carbon-10-30-2026.1 L23401, 2026‑10‑30T14:50:19Z).\n\n**Interpretation**  \n- “LDAP connection circuit breaker is in open state” means the breaker has blocked further LDAP connection attempts because recent attempts have repeatedly failed.  \n- While open, WSO2 will not try a new connection until the open‑state timeout elapses (≈ 48 hours).  \n- Before the timeout expires, it may perform up to two immediate retry attempts (as shown by the “retry attempt … 1/2” messages); after those fail the breaker stays open for the full timeout period.  \n\n**Not from the logs**  \nThe exact configuration values (e.g., the circuit‑breaker timeout) are defined in the server’s LDAP connector settings, but the logs confirm the timeout is ~172 288 623 ms (≈ 48 h) and the maximum retry count is 2.",
+  "tool_calls": [
+   {
+    "name": "find",
+    "turn": 1,
+    "args": {
+     "limit": 20,
+     "min_level": "WARN",
+     "text": "LDAP connection circuit breaker is in open state"
+    },
+    "status": "success",
+    "result": "total 0 · shown 0 · columns: time line level sig text\nfiles 7, indexed 7"
+   },
+   {
+    "name": "find",
+    "turn": 2,
+    "args": {
+     "limit": 20,
+     "min_level": "WARN",
+     "text": "circuit breaker"
+    },
+    "status": "success",
+    "result": "total 3 · shown 3 · columns: file time line level sig text\nwso2carbon-10-30-2026.1 10-30T14:41:58Z L22983 ERROR 8bb2b7e2 Cannot create connection to LDAP server. Connection URL: ldaps://keycloak-window.cnxy.in:636 Error message: Error occurred while obtaining LDAP connection, LDAP connection circuit"
+   },
+   {
+    "name": "search_logs",
+    "turn": 3,
+    "args": {
+     "levels": [
+      "INFO",
+      "WARN",
+      "ERROR"
+     ],
+     "query": "circuit breaker retry",
+     "top_k": 20
+    },
+    "status": "success",
+    "result": "hits 10 · shown 10 · columns: file time line level sig by text\nwso2carbon-11-01-2026.1 11-01T14:42:30Z L257 WARN 68642a5a sk Error occurred while obtaining LDAP connection. Connection URL: ldaps://keycloak-window.cnxy.in:636. LDAP connection circuit breaker state set to: open\nwso2carbon-10-30-2026.1"
+   },
+   {
+    "name": "search_logs",
+    "turn": 4,
+    "args": {
+     "query": "circuit breaker state set to: closed",
+     "top_k": 10
+    },
+    "status": "success",
+    "result": "hits 5 · shown 5 · columns: file time line level sig by text\nwso2carbon-11-01-2026.1 11-01T14:42:30Z L257 WARN 68642a5a sk Error occurred while obtaining LDAP connection. Connection URL: ldaps://keycloak-window.cnxy.in:636. LDAP connection circuit breaker state set to: open\nwso2carbon-11-01-2026.1 1"
+   }
+  ],
+  "model_calls": 5,
+  "attempts": 1,
+  "seconds": 8.2,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": true,
+   "cites": true,
+   "passed": true
+  }
+ }
+]

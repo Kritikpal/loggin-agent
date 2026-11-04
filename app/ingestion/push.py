@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 from fastapi import Request
 from pydantic import ValidationError
 
+from app.core.config import get_settings
 from app.core.errors import InvalidPayloadError, NotFoundError, PayloadTooLargeError, UnauthorizedError
 from app.ingestion.assembler import RawEvent
 from app.ingestion.pipeline import prepare_event
@@ -29,14 +30,18 @@ from app.schemas.ingest import PushEvent
 
 MAX_BODY_BYTES = 1024 * 1024
 MAX_EVENTS = 1000
-MAX_LEVEL_CHARS = 32
+MAX_MESSAGE_CHARS = 256 * 1024  # the same cap a file event gets (AssemblyLimits.max_chars)
+# The level names the agent ranks (app.agent.tools.common.LEVEL_RANKS); any other level a sender makes up is dropped.
+SENDER_LEVELS = frozenset({"TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "SEVERE", "FATAL", "CRITICAL"})
 LOCATOR = {"kind": "push"}
 
 
 def check_token(source: PushSource, authorization: str | None) -> None:
     """404 when the project has no token configured (indistinguishable from an unknown project), 401 when the
     request's bearer token is missing or wrong."""
-    expected = os.environ.get(source.token_env, "")
+    # values from .env reach Settings.model_extra, not os.environ; the key's case depends on where it came from
+    extra = {key.lower(): value for key, value in (get_settings().model_extra or {}).items()}
+    expected = os.environ.get(source.token_env) or str(extra.get(source.token_env.lower(), ""))
     if not expected:
         raise NotFoundError(NOT_FOUND)
     scheme, _, supplied = (authorization or "").partition(" ")
@@ -96,11 +101,12 @@ def build_push_rows(events: Sequence[PushEvent], source: PushSource) -> list[Eve
 
 
 def _row(event: PushEvent, source: PushSource) -> EventRow:
-    text = redact(sanitize(event.message).strip("\n")).text
+    text = redact(sanitize(event.message).strip("\n")).text[:MAX_MESSAGE_CHARS]  # clip after redaction: a cut secret may escape it
     raw = RawEvent(text, 0, 0, 1, 1 + text.count("\n"), False)
     row = prepare_event(SourceEvent(raw, push_event_key(text, event.timestamp), LOCATOR), source)
     sent_at = _sender_time(event.timestamp, source.timezone)
-    sent_level = (event.level or "").strip().upper()[:MAX_LEVEL_CHARS] or None
+    sent_level = (event.level or "").strip().upper()
+    sent_level = sent_level if sent_level in SENDER_LEVELS else None
     return replace(row, occurred_at=sent_at or row.occurred_at, level=row.level or sent_level)
 
 
@@ -109,6 +115,6 @@ def _sender_time(value: str | None, timezone: str) -> datetime | None:
         return None
     try:
         moment = datetime.fromisoformat(value.strip())
-    except ValueError:
+        return (moment if moment.tzinfo else moment.replace(tzinfo=ZoneInfo(timezone))).astimezone(UTC)
+    except (ValueError, OverflowError):  # unparseable, or so near the date range edge that the zone shift overflows
         return None
-    return (moment if moment.tzinfo else moment.replace(tzinfo=ZoneInfo(timezone))).astimezone(UTC)

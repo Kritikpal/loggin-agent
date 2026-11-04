@@ -53,10 +53,13 @@ as a row named `push`.
   message.
 - **Body:** `application/json` list of events, or `application/x-ndjson`. Event: `{"message": str, "timestamp"?: str,
   "level"?: str}`. Extra keys are ignored.
-- **Limits:** body at most 1 MiB, at most 1000 events, `message` at most 16 KiB (longer is truncated by the existing
-  `MAX_TEXT_CHARS` rule, not rejected). Over the body or count limit: 413.
+- **Limits:** body at most 1 MiB, at most 1000 events, a message longer than 256 KiB (the cap a file event gets) is clipped after
+  redaction, not rejected. A `message` that is empty after control characters are removed is a 422. Over the body or count limit: 413.
 - **Reply 200:** `{"received": n, "stored": n, "duplicates": n}`. Pydantic response model.
-- **Errors:** malformed body 422; database unavailable 503 (sender should retry). Error text never echoes log content.
+- **Errors:** malformed body 422; database unreachable 503 (sender should retry; any other database error is a 500).
+  An invalid project is a 409 only after the token checks out. The token is looked up in the environment, then in the
+  `.env` values `Settings` keeps. A sender `level` outside TRACE/DEBUG/INFO/WARN/WARNING/ERROR/SEVERE/FATAL/CRITICAL
+  is ignored. Error text never echoes log content.
 
 ### 3. Processing (request path)
 

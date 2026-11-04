@@ -117,3 +117,11 @@ async def test_app_lifespan_starts_and_stops_the_loop(monkeypatch):
         await asyncio.wait_for(started.wait(), 1)
         assert not stopped.is_set()
     assert stopped.is_set()
+
+
+async def test_a_partial_index_serves_the_unembedded_lookup(session_factory):
+    from sqlalchemy import text
+
+    async with session_factory() as s:
+        definition = await s.scalar(text("SELECT indexdef FROM pg_indexes WHERE indexname = 'ix_log_events_unembedded'"))
+    assert definition and "WHERE (embedding IS NULL)" in definition

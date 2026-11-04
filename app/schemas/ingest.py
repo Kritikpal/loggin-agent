@@ -1,5 +1,7 @@
 from pydantic import BaseModel, field_validator
 
+from app.ingestion.sanitize import sanitize
+
 
 class PushEvent(BaseModel):
     """One pushed log event. Keys other than these are ignored."""
@@ -11,7 +13,7 @@ class PushEvent(BaseModel):
     @field_validator("message")
     @classmethod
     def _not_blank(cls, value: str) -> str:
-        if not value.strip():
+        if not sanitize(value).strip():  # what is left once control characters are removed is what gets stored
             raise ValueError("message must not be blank")
         return value
 

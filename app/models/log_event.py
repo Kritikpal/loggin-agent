@@ -20,6 +20,7 @@ class LogEvent(Base):
         Index("ix_log_events_source_time", "source_id", "occurred_at"),
         Index("ix_log_events_level_time", "level", "occurred_at"),
         Index("ix_log_events_signature_time", "signature", "occurred_at"),
+        Index("ix_log_events_unembedded", "id", postgresql_where=text("embedding IS NULL")),
         Index("ix_log_events_search_tsv", "search_tsv", postgresql_using="gin"),
         Index(
             "ix_log_events_embedding", "embedding", postgresql_using="hnsw",

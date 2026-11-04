@@ -17,7 +17,8 @@ logger = logging.getLogger(__name__)
 async def run_embed_loop(
     session_factory: SessionFactory, *, interval: float, embed: Embedder = embed_documents,
 ) -> None:
-    """Until cancelled. ponytail: one loop per process; extra workers repeat harmless idempotent updates."""
+    """Until cancelled. ponytail: one loop per process (extra workers repeat harmless idempotent updates); a row that
+    always makes the embedder fail is retried first on every pass and holds back the vectors after it."""
     while True:
         try:
             await reembed_missing(session_factory, embed=embed)

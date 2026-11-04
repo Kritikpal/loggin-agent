@@ -6,8 +6,9 @@ from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import func, select
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import DataError, OperationalError
 
+from app.core.config import Settings
 from app.ingestion.sources import PushSource
 from app.models import LogEvent
 from tests.project_helpers import make_project, projects_client
@@ -186,3 +187,72 @@ async def test_concurrent_identical_pushes_store_one_row(session_factory):
     assert sorted(r.json()["stored"] for r in results) == [0, 1]
     async with session_factory() as s:
         assert await s.scalar(select(func.count()).select_from(LogEvent)) == 1
+
+
+# --- fixes from the final review ---
+
+
+async def test_token_set_only_in_dotenv_settings_is_found(session_factory, monkeypatch):
+    monkeypatch.delenv("DEMO_TOKEN")  # .env values reach Settings.model_extra, never os.environ
+    settings = Settings(_env_file=None, database_url="postgresql://u@h/db", DEMO_TOKEN=TOKEN)
+    monkeypatch.setattr("app.ingestion.push.get_settings", lambda: settings)
+    async with projects_client(session_factory, (push_project(),)) as http:
+        res = await push(http, [{"message": "x"}])
+    assert res.status_code == 200
+
+
+async def test_timestamps_at_the_edge_of_the_range_are_not_a_500(session_factory):
+    events = [{"message": "min", "timestamp": "0001-01-01T00:00:00"}, {"message": "max", "timestamp": "9999-12-31T23:59:59"}]
+    async with projects_client(session_factory, (push_project("Asia/Kolkata"),)) as http:
+        res = await push(http, events)
+    assert res.status_code == 200 and res.json()["stored"] == 2
+
+
+@pytest.mark.parametrize("message", ["\u0000\u0000", "[31m", "\u200b"])
+async def test_message_that_sanitizes_to_nothing_is_422(session_factory, message):
+    async with projects_client(session_factory, (push_project(),)) as http:
+        res = await push(http, [{"message": message}])
+    assert res.status_code == 422
+    assert await rows(session_factory) == []
+
+
+async def test_long_message_is_clipped(session_factory):
+    async with projects_client(session_factory, (push_project(),)) as http:
+        res = await push(http, [{"message": "a" * 900_000}])
+    assert res.status_code == 200
+    (stored,) = await rows(session_factory)
+    assert len(stored.raw_text) == 256 * 1024
+
+
+async def test_unknown_sender_level_is_dropped(session_factory):
+    events = [
+        {"message": "one", "level": "banana!!"}, {"message": "two", "level": "ERR\u0000"},
+        {"message": "three", "level": " warning "},
+    ]
+    async with projects_client(session_factory, (push_project(),)) as http:
+        res = await push(http, events)
+    assert res.status_code == 200
+    by_text = {r.raw_text: r.level for r in await rows(session_factory)}
+    assert by_text == {"one": None, "two": None, "three": "WARNING"}
+
+
+async def test_a_database_error_that_is_not_a_connection_problem_is_not_503(session_factory):
+    from app.core.database import get_session
+
+    class BuggySession:
+        def begin(self):
+            raise DataError("insert", {}, Exception("bad value"))
+
+    async def buggy():
+        yield BuggySession()
+
+    async with projects_client(session_factory, (push_project(),), {get_session: buggy}) as http:
+        with pytest.raises(DataError):
+            await push(http, [{"message": "x"}])
+
+
+async def test_invalid_project_without_a_token_is_401_and_explains_nothing(session_factory):
+    async with projects_client(session_factory, (push_project(error="push_token_env must match"),)) as http:
+        res = await push(http, [{"message": "x"}], token=None)
+    assert res.status_code == 401
+    assert "push_token_env" not in res.text
