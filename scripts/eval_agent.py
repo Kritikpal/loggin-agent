@@ -2,7 +2,7 @@
 
     uv run python -m scripts.eval_agent                     all cases; results to docs/<golden file>-eval-<time>.json
     uv run python -m scripts.eval_agent --smoke             the smoke set (one case per class), after a prompt change
-    uv run python -m scripts.eval_agent --only s1-dev-auth-error-count,q2-identifier-hibernate-code
+    uv run python -m scripts.eval_agent --only w1-error-count-and-kinds-1030,w7-auth-cache-error
     uv run python -m scripts.eval_agent --class no_tool
     uv run python -m scripts.eval_agent --langsmith         also record an experiment in LangSmith
 
@@ -75,13 +75,20 @@ def record(case: dict, outputs: dict) -> dict:
             **outputs, "checks": checks}
 
 
-async def run_local(cases: Sequence[dict], pause: float, project: Project) -> list[dict]:
-    results = []
-    for n, case in enumerate(cases):
-        results.append(record(case, await run_case(case, project)))
-        if n < len(cases) - 1:
-            await asyncio.sleep(pause)
-    return results
+async def run_local(cases: Sequence[dict], pause: float, project: Project, workers: int = 1) -> list[dict]:
+    """`workers` cases at a time. Each case builds its own agent, which takes the next Groq key in turn (app.core.llm),
+    so with as many workers as keys every worker has a key of its own. Results keep the order of `cases`."""
+    slots = asyncio.Semaphore(workers)
+    last = len(cases) - 1
+
+    async def one(n: int, case: dict) -> dict:
+        async with slots:
+            result = record(case, await run_case(case, project))
+            if n < last:
+                await asyncio.sleep(pause)  # inside the slot: each worker stays paced
+            return result
+
+    return list(await asyncio.gather(*(one(n, case) for n, case in enumerate(cases))))
 
 
 async def run_langsmith(cases: Sequence[dict], all_cases: Sequence[dict], name: str, pause: float,
@@ -145,6 +152,9 @@ async def main() -> None:
     parser.add_argument("--smoke", action="store_true", help="only the smoke set (one case per class)")
     parser.add_argument("--golden", type=Path, default=GOLDEN, help=f"golden set file (default {GOLDEN})")
     parser.add_argument("--pause", type=float, default=PAUSE, help="seconds between cases")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="cases run at once (local runs); up to the number of Groq keys. Groq limits an "
+                             "organisation, not a key, so keys of one organisation share the limit")
     parser.add_argument("--langsmith", action="store_true", help="record an experiment in LangSmith")
     parser.add_argument("--project", default=PROJECT, help=f"project folder under LOGS_ROOT (default {PROJECT})")
     parser.add_argument("--out", type=Path, help="results file (default docs/agent-eval-golden-<time>.json)")
@@ -159,7 +169,7 @@ async def main() -> None:
     if args.langsmith:
         results = await run_langsmith(cases, golden["cases"], name, args.pause, project)
     else:
-        results = await run_local(cases, args.pause, project)
+        results = await run_local(cases, args.pause, project, max(1, args.workers))
     out = args.out or Path(f"docs/{args.golden.stem}-eval-{datetime.now():%Y%m%d-%H%M}.json")
     out.write_text(json.dumps(results, indent=1, ensure_ascii=False, default=str), encoding="utf-8")
     report(results)

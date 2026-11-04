@@ -7,15 +7,16 @@ from collections import Counter
 import pytest
 import yaml
 
+from scripts.eval_scoring import BUDGETS
 from tests.project_helpers import FIXTURE_LOGS
 from tests.search_helpers import FIXTURES
 
 GOLDEN = FIXTURES / "agent-golden.yaml"
 CLASSES = {"summary_only", "summary_then_search", "search_only", "no_tool", "beyond_tools"}
 KINDS = {"common", "edge", "adversarial"}
-TOOLS = {"search_logs", "summarize_logs"}
+TOOLS = set(BUDGETS)  # overview, find, search_logs: the registry, copied into the scorer
 FIELDS = {"id", "class", "kind", "question", "tools", "forbid", "answer_has", "answer_lacks", "cites", "setup", "note",
-          "smoke"}
+          "smoke", "max_model_calls", "expect_batch"}
 EVENT_START = re.compile(r"^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}|TID: \[)")
 
 DATA = yaml.safe_load(GOLDEN.read_text(encoding="utf-8"))
@@ -32,7 +33,14 @@ def test_ids_are_unique_and_every_class_is_covered():
 
     assert [i for i, n in ids.items() if n > 1] == []
     assert {case["class"] for case in CASES} == CLASSES
-    assert len(CASES) >= 10
+    assert {case["kind"] for case in CASES} == KINDS
+    assert len(CASES) == 17
+
+
+def test_every_tool_is_required_by_some_case():
+    required = {tool for case in CASES for tool in case["tools"]}
+
+    assert required == TOOLS
 
 
 def test_the_smoke_set_has_one_case_of_every_class():

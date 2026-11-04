@@ -64,7 +64,12 @@ def _contains(expected: str, answer: str, folded: str) -> bool:
     """A bare number must stand alone ("18 errors", not "line 1820" or "10:18:04"); other text is a substring."""
     if str(expected).isdigit():
         return _cited(int(expected), answer)
-    return str(expected).casefold() in folded
+    return _spaced(str(expected).casefold()) in _spaced(folded)
+
+
+def _spaced(text: str) -> str:
+    """A hyphen reads as a space: "circuit-breaker" and "circuit breaker" are the same fact."""
+    return text.replace("-", " ")
 
 
 def _cited(line: int, answer: str) -> bool:

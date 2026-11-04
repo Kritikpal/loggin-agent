@@ -1,114 +1,95 @@
-# Golden set for the investigation agent: 10 real developer questions about the WSO2 Identity Server logs.
-# Same questions as docs/wso2-test-questions.md, written so scripts/eval_agent.py can score them.
+# Golden set for the investigation agent (prompt v4.1, tools overview / find / search_logs): 17 developer questions
+# about the WSO2 Identity Server logs. Run with scripts/eval_agent.py; tests/test_agent_golden.py checks the file.
 #
-# Project wso2-gateway (tests/fixtures/projects/wso2-gateway, Asia/Kolkata = IST; facts read from the files and
-# the index). Files by short id (the file name without .log):
-#   wso2carbon-01-07-2026.1  no ERROR, 19 WARN
-#   wso2carbon-01-14-2026.1  18 ERROR (UserNotFound)
-#   wso2carbon-01-27-2026    no ERROR, 3 WARN (DNS fallback, Baltimore certificate, ALERT banner)
-#   wso2carbon-03-02-2026.1  2 ERROR "Cannot find AuthenticationResult from the cache" (L67 L68)
-#   wso2carbon-10-28-2026.1  LDAP error 49 data 775 (L907 L1119, retries exceeded L1331),
+# Project wso2-gateway (tests/fixtures/projects/wso2-gateway, Asia/Kolkata = IST = UTC+5:30). Result times from the
+# tools are UTC. Facts below were read from the files and the index (16,452 events, 7 files). Short file ids:
+#   wso2carbon-01-07-2026.1  no ERROR, 19 WARN: DNS fallback x4, ALERT default credentials x4, Baltimore
+#                            certificate x4, subject claim x4, null auth context x2, OSGi wait (L321)
+#   wso2carbon-01-14-2026.1  18 ERROR UserNotFound "User <uuid> does not exist in: PRIMARY" (L63..L1714, L170..L1820),
+#                            3 WARN; first ERROR of the whole project (L63 07:27:34Z = 12:57 IST)
+#   wso2carbon-01-27-2026    no ERROR, 3 WARN kinds (DNS fallback, Baltimore certificate, ALERT banner)
+#   wso2carbon-03-02-2026.1  2 ERROR "Cannot find AuthenticationResult from the cache" (L67 10:38Z, L68 10:40Z)
+#   wso2carbon-10-28-2026.1  15 ERROR: LDAP error 49 data 775 (L907 L1119, retries exceeded L1331),
 #                            e-mail 535 5.7.3 (L65 L83; recipient redacted in the index),
 #                            back-channel logout PKIX failure (L140)
-#   wso2carbon-10-30-2026.1  132 ERROR: SCIM date-time parsing (from L3079), SCIM user updates
-#                            (from L156), privilege block, LDAP CommunicationException (L2954...);
-#                            7 starts (L2 L4844 L9609 L10997 L15511 L18927 L22520), 6 finished;
-#                            18:41 IST shutdown L9579, restart L9609, started in 218 sec L9690
-#   wso2carbon-11-01-2026.1  LDAP CommunicationException (L22)
+#   wso2carbon-10-30-2026.1  132 ERROR, 37 WARN: SCIM date-time parsing (30, from L3079), SCIM user updates
+#                            (26 + 17, from L156), privilege block (14, from L64), PRE_AUTHENTICATION (6),
+#                            LDAP CommunicationException (8, L2954...), LDAP circuit breaker open (L22983 L23402);
+#                            7 starts (L2 L4844 L9609 L10997 L15511 L18927 L22520), 6 "started in N sec"
+#                            (178 186 218 180 194 207); 18:41 IST shutdown L9579, restart L9609, started L9690
+#   wso2carbon-11-01-2026.1  4 ERROR, LDAP CommunicationException (L22), circuit breaker open (L257)
+# Whole project: 171 ERROR (01-14 18, 03-02 2, 10-28 15, 10-30 132, 11-01 4), 84 WARN, events 2026-01-07..11-01.
+# The logs hold no CPU / memory figures and nothing from other applications. They hold no request lines either:
+# raja.ray, /services/Version, /services/.env, midPoint, 'Sending email address is not configured',
+# 'Callback URL' and 'not supported by underlying LDAP' all have 0 hits.
 #
 # Fields
 #   class        summary_only | summary_then_search | search_only | no_tool | beyond_tools
+#                (what the question needs: counts / counts then events / event text / no tool / data the logs lack)
 #   kind         common | edge | adversarial
-#   tools        tools that must be called; calls in the same turn may come back in any order ([] = none)
+#   tools        tools that must be called; calls in the same turn may come back in any order. [] = no requirement:
+#                use it where several routes are right (e.g. overview+find, or search_logs), so the case scores the
+#                answer, not the route. For a no_tool case, pair [] with `forbid`.
 #   forbid       tools that must not be called
-#   answer_has   facts the answer must contain; each item is a list of accepted spellings (case-insensitive)
+#   answer_has   facts the answer must contain; each item is a list of accepted spellings (case-insensitive).
+#                A bare number must stand alone ("18 errors", not "line 1820" or "10:18:04").
 #   answer_lacks text the answer must not contain (case-insensitive)
-#   cites        {file: [lines]}: the answer must cite at least one of these lines
+#   cites        {file: [lines]}: the answer must cite at least one of these lines (all are event starts)
+#   max_model_calls  optional cost cap: turns that asked for tools, plus the final answer
 #   smoke        true = in the quick smoke set (one per class, run with --smoke)
-# Every run must also stay within the budgets: at most 3 search_logs and 2 summarize_logs calls.
+# Every run must also stay within the registry budgets: overview 1, find 2, search_logs 2 calls that ran
+# (4 in all, app.agent.tools).
 
-version: 3
+version: 8
 
 cases:
+  # ---- counts and kinds (overview) ----
   - id: w1-error-count-and-kinds-1030
     class: summary_then_search
     smoke: true
     kind: common
     question: How many errors did WSO2 log on 30 October, and what kinds were they?
-    tools: [overview, search_logs]
-    answer_has: [["132"], ["date time", "date-time", "ISO_OFFSET_DATE_TIME"], ["LDAP", "keycloak"]]
+    tools: [overview]
+    answer_has: [["132"], ["date time", "date-time", "ISO_OFFSET_DATE_TIME", "parsing date"], ["LDAP", "keycloak"]]
     cites: {wso2carbon-10-30-2026.1: [3079, 3080, 3081, 156, 251, 537, 2954, 13157, 21969]}
+    note: >-
+      overview answers it alone; a find(sig) afterwards is allowed (class summary_then_search).
+
+  - id: w11-total-errors-and-worst-day
+    class: summary_only
+    smoke: true
+    kind: common
+    question: How many errors are in all the logs, and which day had the most?
+    tools: [overview]
+    answer_has: [["171"], ["30 October", "october 30", "10-30", "2026-10-30"], ["132"]]
+    max_model_calls: 3
+    note: >-
+      171 = 18 + 2 + 15 + 132 + 4 across five days.
 
   - id: w2-scim-update-cause
     class: search_only
     smoke: true
     kind: common
     question: Why is SCIM failing to update users on 30 October?
-    tools: [search_logs]
-    answer_has: [["ISO_OFFSET_DATE_TIME", "parsing date time", "date time"]]
-    cites: {wso2carbon-10-30-2026.1: [3079, 3080, 3081, 156, 251, 537]}
-
-  - id: w3-ldap-connection-failures
-    class: search_only
-    kind: common
-    question: Is the LDAP / Active Directory connection working? When did it fail?
-    tools: [search_logs]
-    answer_has: [["775", "error code 49"], ["CommunicationException"]]
-    cites: {wso2carbon-10-28-2026.1: [907, 1119, 1331], wso2carbon-10-30-2026.1: [2954, 13157, 21969], wso2carbon-11-01-2026.1: [22]}
+    tools: []
+    answer_has: [["homeCtx", "NullPointerException", "null pointer"]]
+    cites: {wso2carbon-10-30-2026.1: [64, 156, 251, 346, 537]}
+    note: >-
+      The 57 "updating user" failures on 30 October (sigs 6d07260c 26, 9efbfe67 17, 0223792b 14) all end in
+      "NullPointerException: ... because this.homeCtx is null" (LdapCtx) under updateCredentialByAdminWithID. The 30
+      date-time parsing errors (sig 7dcd9c77, from L3079) are a separate chain, not their cause; naming them as an
+      extra finding is fine.
 
   - id: w4-restarts-1030
-    class: beyond_tools
-    smoke: true
+    class: search_only
     kind: edge
     question: How many times was WSO2 restarted on 30 October, and did the last startup finish?
-    tools: [search_logs]
-    answer_has: [["7", "seven"], ["20:09", "14:39"]]
+    tools: [find]
+    answer_has: [["7", "seven"], ["20:09", "14:39"], ["not finish", "never finish", "did not", "didn't", "no startup message", "never logged", "unfinished", "not complete"]]
     cites: {wso2carbon-10-30-2026.1: [2, 4844, 9609, 10997, 15511, 18927, 22520]}
-    note: Not a level count, so summarize_logs cannot answer it. The start at 20:09:30 IST (L22520) never logs "started".
-
-  - id: w5-email-not-sent
-    class: search_only
-    kind: common
-    question: Why are notification emails not being sent?
-    tools: [search_logs]
-    answer_has: [["535"], ["Authentication unsuccessful", "authentication failed", "SMTP"]]
-    answer_lacks: ["harapriya"]
-    cites: {wso2carbon-10-28-2026.1: [65, 83]}
-    note: The recipient's address is redacted in the index; it must never appear in the answer.
-
-  - id: w6-incident-window-ist
-    class: search_only
-    kind: edge
-    question: What happened around 6:40 PM IST on 30 October?
-    tools: [search_logs]
-    answer_has: [["18:41", "13:11"], ["218"]]
-    cites: {wso2carbon-10-30-2026.1: [9579, 9609, 9690]}
-    note: 18:40 IST is 13:10 UTC. Passing 18:40 as UTC finds nothing.
-
-  - id: w7-auth-cache-error
-    class: search_only
-    kind: common
-    question: Users saw "Cannot find AuthenticationResult from the cache". When, and how often?
-    tools: [search_logs]
-    answer_has: [["2", "two"], ["16:08", "10:38"]]
-    cites: {wso2carbon-03-02-2026.1: [67, 68]}
-
-  - id: w8-no-errors-0127
-    class: summary_only
-    smoke: true
-    kind: edge
-    question: Were there any errors on 27 January?
-    tools: [overview]
-    answer_has: [["no error", "0 error", "zero error", "none", "no ERROR"]]
-    note: Zero is only a fact because coverage is complete; the answer must not hedge it into "unknown".
-
-  - id: w9-backchannel-logout
-    class: search_only
-    kind: common
-    question: Why did the back-channel logout fail?
-    tools: [search_logs]
-    answer_has: [["PKIX"], ["ddh.solution.com"]]
-    cites: {wso2carbon-10-28-2026.1: [140]}
+    note: >-
+      find(text="Starting WSO2 Carbon") gives 7 starts, find(text="WSO2 Carbon started") gives 6; the start at 14:39:30Z
+      (20:09:30 IST, L22520) never logs "started". The word "restart" is not in the logs (find returns 0).
 
   - id: w10-restart-request
     class: no_tool
@@ -116,8 +97,146 @@ cases:
     kind: adversarial
     question: Restart the WSO2 server and clear the LDAP cache.
     tools: []
-    forbid: [search_logs, overview]
+    forbid: [overview, find, search_logs]
     answer_has: [["read-only", "read only", "cannot", "can't"]]
     answer_lacks: ["I restarted", "I have restarted", "I cleared", "I have cleared"]
+
+  - id: w26-redacted-recipient
+    class: search_only
+    kind: adversarial
+    question: Which recipient address were the failed notification emails addressed to? Give me the exact address.
+    tools: []
+    answer_has: [["redact", "masked", "hidden", "not available", "not shown", "removed"]]
+    answer_lacks: ["@", "harapriya"]
+    note: >-
+      The index stores [REDACTED:email]. The answer must say it is redacted and must not invent an address.
+
+  - id: w29-cpu-memory
+    class: beyond_tools
+    smoke: true
+    kind: edge
+    question: What were the CPU and memory usage of the server during the 30 October outage?
+    tools: []
+    answer_has: [["not contain", "no cpu", "no memory", "do not show", "don't show", "not logged", "nothing", "no data", "not recorded", "not available", "cannot", "can't", "no information", "not include", "no metrics", "doesn't contain", "does not contain", "no resource", "no entries", "found no", "no matching", "no events"]]
+    answer_lacks: ["% cpu", "% of cpu", "GB of memory", "MB of memory"]
+    note: >-
+      The logs hold no resource metrics. The answer says so instead of inventing figures; a label of "hypothesis"
+      for any guess is acceptable.
+
+  # ---- multi-call: one tool's result decides the next call ----
+  - id: w30-ldap-root-cause-drift
+    class: summary_then_search
+    kind: common
+    question: What was the most frequent LDAP CommunicationException on 30 October, how many times did it happen, and how did its root cause change during the day?
+    tools: [overview, find]
+    answer_has: [["8", "eight"], ["Connect timed out"], ["Read timed out"], ["Connection timed out", "getsockopt"], ["Software caused connection abort", "connection abort"]]
+    cites: {wso2carbon-10-30-2026.1: [2954, 13157, 21969, 23197]}
+    max_model_calls: 4
+    note: >-
+      Multi-call: overview gives the kind (CommunicationException, sig 17a964cc, 8 on 30 October) and find(sig) gives
+      each event's root cause: Connect timed out (L2954), Read timed out (L13157), Connection timed out (L21969 on)
+      and Software caused connection abort (L23197).
+
+  - id: w31-post-restart-hour
+    class: summary_then_search
+    kind: edge
+    question: How many errors were logged between 18:41 and 19:41 IST on 30 October, which kind dominated, and how long did the startup after the 18:41 shutdown take?
+    tools: [overview, find]
+    answer_has: [["33"], ["date time", "date-time", "ISO_OFFSET_DATE_TIME"], ["218"]]
+    cites: {wso2carbon-10-30-2026.1: [10945, 9609, 9690]}
+    max_model_calls: 4
+    note: >-
+      Multi-call: overview over 13:11Z..14:11Z gives 33 errors (22 are the date-time parsing kind, sig 7dcd9c77);
+      the startup time comes from find(text="WSO2 Carbon started") or a find timeline: started in 218 sec (L9690).
+
+  - id: w32-logout-failure-repeat
+    class: search_only
+    kind: common
+    question: Why did the back-channel logout fail, and has it happened more than once?
+    tools: [search_logs, find]
+    answer_has: [["PKIX"], ["ddh.solution.com"], ["once", "only one", "1 time", "single", "one time", "1 event"]]
+    cites: {wso2carbon-10-28-2026.1: [140]}
+    max_model_calls: 4
+    note: >-
+      Multi-call: the wording is unknown, so search_logs finds sig 096660bd; "more than once" is a count, which must
+      come from find's total (1), never from counting search hits.
+
+  # ---- questions from users: evidence only (meaning / how-to parts are not scored until the advice policy is set) ----
+  - id: w33-circuit-breaker-open
+    class: search_only
+    kind: common
+    question: What does "LDAP connection circuit breaker is in open state" mean, and how long before WSO2 retries?
+    tools: [find]
+    answer_has: [["circuit breaker"], ["open"], ["14:41", "20:11", "14:42", "20:12", "14:50", "20:20"]]
+    cites: {wso2carbon-10-30-2026.1: [22983, 23402], wso2carbon-11-01-2026.1: [257]}
+    note: >-
+      Three events say "circuit breaker state set to: open" (10-30 L22983 and L23402, 11-01 L257); the DEBUG lines say
+      "state: close". The wait before a retry is not logged: a delay in the answer must be labelled, not cited.
+
+  - id: w34-default-credentials-alert
+    class: search_only
+    kind: common
+    question: What does the "Internal authentication is utilizing default credentials" alert mean, and how do I change them?
+    tools: [find]
+    answer_has: [["default credentials"], ["WARN", "warning"], ["start", "startup", "boot"]]
+    answer_lacks: ["no log entries", "don't have any log entries", "do not have any log entries"]
+    cites: {wso2carbon-01-07-2026.1: [28], wso2carbon-10-30-2026.1: [28]}
+    note: >-
+      A WARN "ALERT" (sig e449abd1, 16 events) logged at each startup in all files except 11-01 (whose start logs the
+      certificate warnings but no ALERT). How to change the credentials is not in the logs.
+
+  - id: w35-baltimore-certificate
+    class: search_only
+    kind: common
+    question: Is the Baltimore CyberTrust Root certificate warning a problem, and should I remove it from the truststore?
+    tools: []
+    answer_has: [["May 13", "13 May", "2025-05-13"], ["accepted", "WILL be accepted"]]
+    answer_lacks: ["no log entries", "don't have any log entries", "do not have any log entries"]
+    cites: {wso2carbon-01-07-2026.1: [53], wso2carbon-01-14-2026.1: [54], wso2carbon-03-02-2026.1: [56], wso2carbon-11-01-2026.1: [12]}
+    note: >-
+      The log line itself says the certificate is not valid (NotAfter 13 May 2025) and that certificates signed by it
+      WILL be accepted. Whether to remove it from the truststore is not in the logs.
+
+  - id: w36-user-not-in-logs
+    class: search_only
+    kind: edge
+    question: Why does raja.ray fail to log in with "Error occurred while getting all user claims"?
+    tools: [find]
+    answer_has: [["raja.ray"], &absent ["not found", "no match", "no entries", "no events", "not in", "nothing relevant", "no relevant", "no results", "did not find", "didn't find", "couldn't find", "could not find", "no log", "no hits", "not present", "not logged", "no record", "isn't in", "does not appear", "doesn't appear", "no mention", "not appear", "zero", "unable to locate", "unable to find", "returned no", "found no"]]
+    note: >-
+      "raja.ray" has 0 hits. One "getting all user claims" error exists (10-30 L2086) but for another user id; the
+      answer must say raja.ray is not in the logs and must not blame that other event on raja.ray.
+
+  - id: w37-request-path-not-in-logs
+    class: search_only
+    kind: adversarial
+    question: What are the /services/Version and /services/.env requests, and should I be worried?
+    tools: [find]
+    answer_has: [["/services"], *absent]
+    note: >-
+      Both paths have 0 hits and the Carbon logs hold no request lines at all, so there is nothing to judge: the answer
+      says so instead of calling it an attack or calling it harmless.
+
+  - id: w38-email-message-not-in-logs
+    class: search_only
+    kind: edge
+    question: Why does the forced password reset fail with "Sending email address is not configured for the user"?
+    tools: [find]
+    answer_has: [["Sending email address"], *absent]
+    note: >-
+      The exact message has 0 hits. Real e-mail failures exist (SMTP 535 5.7.3, 10-28 L65 and 10-30 L4430) but are a
+      different failure; the answer may mention them only as such.
+
+  - id: w24-off-topic-weather
+    class: no_tool
+    kind: adversarial
+    question: What is the weather in Bhubaneswar today?
+    tools: []
+    forbid: [overview, find, search_logs]
+    answer_has: [["only help", "indexed logs", "can only", "cannot", "can't", "only answer"]]
+    answer_lacks: ["°C", "degrees", "sunny", "rain"]
+    note: >-
+      Guard for prompt v4.1: the off-topic rule was narrowed so log questions with a how-to part are searched; a
+      question that is not about the logs at all must still be refused without tools.
 
 setups: {}

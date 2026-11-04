@@ -112,3 +112,11 @@ def test_curly_quotes_count_as_plain_ones():
 
     assert score(case, "I can’t perform any actions on the server.", [])["passed"]
     assert score({"tools": [], "answer_has": [['"read only"']]}, "it is “read only” here", [])["passed"]
+
+
+def test_a_hyphen_and_a_space_are_the_same_in_a_fact():
+    case = {**CASE, "answer_has": [["circuit breaker"]]}
+
+    assert score(case, "The circuit\u2011breaker was open.", [])["answer_has"]
+    assert score(case, "The circuit-breaker was open.", [])["answer_has"]
+    assert not score(case, "The breaker was open.", [])["answer_has"]
