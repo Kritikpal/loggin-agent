@@ -36,6 +36,28 @@ class ProjectInvalidError(AppError):
     code = "project_invalid"
 
 
+class UnauthorizedError(AppError):
+    status_code = 401
+    code = "unauthorized"
+
+
+class PayloadTooLargeError(AppError):
+    status_code = 413
+    code = "payload_too_large"
+
+
+class InvalidPayloadError(AppError):
+    status_code = 422
+    code = "validation_error"
+
+
+class StorageUnavailableError(AppError):
+    """The database could not take the write; the caller should retry."""
+
+    status_code = 503
+    code = "storage_unavailable"
+
+
 class AIUnavailableError(AppError):
     """The AI model is not configured or its provider failed."""
 

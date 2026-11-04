@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
-from app.controllers import chat, health, projects
+from app.controllers import chat, health, ingest, projects
 
 api_router = APIRouter()
-for module in (health, projects, chat):
+for module in (health, projects, ingest, chat):
     api_router.include_router(module.router)
