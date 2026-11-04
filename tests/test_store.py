@@ -1,5 +1,6 @@
 """5.7: the event upsert and the per-source index state, against the real test database."""
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -7,7 +8,7 @@ from sqlalchemy import func, select, text
 
 from app.core.embeddings import EMBEDDING_DIMENSIONS
 from app.ingestion.readers.base import Cursor
-from app.ingestion.store import EventRow, advance_state, load_cursor, record_error, upsert_events
+from app.ingestion.store import EventRow, advance_state, insert_new_events, load_cursor, record_error, upsert_events
 from app.models import LogEvent, SourceIndexState
 
 pytestmark = pytest.mark.integration
@@ -183,3 +184,36 @@ async def test_a_damaged_stored_cursor_means_start_over(session_factory):
         s.add(SourceIndexState(source_id="a", cursor="{not json"))
     async with session_factory() as s:
         assert await load_cursor(s, "a") == Cursor()
+
+
+async def insert_new(factory, source_id: str, rows: list[EventRow]) -> int:
+    async with factory() as s, s.begin():
+        return await insert_new_events(s, source_id, rows)
+
+
+async def test_insert_new_events_skips_existing_keys(session_factory):
+    assert await insert_new(session_factory, "a", [row(1)]) == 1
+    assert await insert_new(session_factory, "a", [row(1), row(2)]) == 1
+    assert await count(session_factory, "a") == 2
+
+
+async def test_insert_new_events_does_not_overwrite(session_factory):
+    await insert_new(session_factory, "a", [row(1, "first")])
+    await insert_new(session_factory, "a", [row(1, "second")])
+    async with session_factory() as s:
+        assert await s.scalar(select(LogEvent.raw_text)) == "first"
+
+
+async def test_duplicates_inside_one_call_count_once(session_factory):
+    assert await insert_new(session_factory, "a", [row(3), row(3)]) == 1
+    assert await count(session_factory) == 1
+
+
+async def test_concurrent_identical_inserts_leave_one_row(session_factory):
+    inserted = await asyncio.gather(*(insert_new(session_factory, "a", [row(4)]) for _ in range(2)))
+    assert sorted(inserted) == [0, 1]
+    assert await count(session_factory) == 1
+
+
+async def test_insert_new_events_with_no_rows_returns_zero(session_factory):
+    assert await insert_new(session_factory, "a", []) == 0

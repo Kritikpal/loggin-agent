@@ -64,6 +64,16 @@ async def upsert_events(session: AsyncSession, source_id: str, rows: Sequence[Ev
     await session.execute(stmt, [_values(source_id, row) for row in rows])
 
 
+async def insert_new_events(session: AsyncSession, source_id: str, rows: Sequence[EventRow]) -> int:
+    """Insert only events whose key is new for the source; existing rows are left exactly as they are (no overwrite,
+    no re-embed). Returns how many rows were really inserted, so the caller can count the rest as duplicates."""
+    if not rows:
+        return 0
+    stmt = insert(LogEvent).on_conflict_do_nothing(index_elements=[LogEvent.source_id, LogEvent.event_key])
+    result = await session.execute(stmt.returning(LogEvent.id), [_values(source_id, row) for row in rows])
+    return len(result.all())
+
+
 def _values(source_id: str, row: EventRow) -> dict[str, Any]:
     return {
         "source_id": source_id, "event_key": row.event_key, "locator": dict(row.locator),

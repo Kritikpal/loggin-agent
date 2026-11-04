@@ -30,7 +30,7 @@ from app.ingestion.readers.base import ReadResult, SourceEvent
 from app.ingestion.readers.file_reader import FileReader
 from app.ingestion.redaction import redact
 from app.ingestion.semantic_text import MAX_TEXT_CHARS, build_semantic_text
-from app.ingestion.sources import FileSource, Source
+from app.ingestion.sources import FileSource, Source, SourceBase
 from app.ingestion.signature import event_signature
 from app.ingestion.store import EventRow, advance_state, load_cursor, record_error, upsert_events
 from app.models.log_event import LogEvent
@@ -120,7 +120,7 @@ async def _store_batch(
     source: FileSource, session_factory: SessionFactory, result: ReadResult, report: IndexReport,
     embed: Embedder, embed_batch_size: int,
 ) -> IndexReport:
-    rows = [_prepare(event, source) for event in result.events]
+    rows = [prepare_event(event, source) for event in result.events]
     rows, embedded = await _embed_rows(rows, embed, embed_batch_size)
     times = [row.occurred_at for row in rows if row.occurred_at is not None]
     async with session_factory() as session, session.begin():
@@ -137,7 +137,7 @@ async def _store_batch(
     )
 
 
-def _prepare(event: SourceEvent, source: FileSource) -> EventRow:
+def prepare_event(event: SourceEvent, source: SourceBase) -> EventRow:
     # Redaction first, and outside the guard: if it fails nothing may be stored, so the whole run fails instead.
     text = redact(event.event.text).text
     unparsed = event_signature(level=None, logger=None, message=None, raw_text=text)
