@@ -256,3 +256,14 @@ async def test_invalid_project_without_a_token_is_401_and_explains_nothing(sessi
         res = await push(http, [{"message": "x"}], token=None)
     assert res.status_code == 401
     assert "push_token_env" not in res.text
+
+
+def test_openapi_documents_the_body_and_the_token_header():
+    from app.main import create_app
+
+    op = create_app().openapi()["paths"]["/api/v1/projects/{project_id}/ingest"]["post"]
+    body = op["requestBody"]
+    assert body["required"] is True
+    assert body["content"]["application/json"]["schema"]["items"]["required"] == ["message"]
+    assert "application/x-ndjson" in body["content"]
+    assert "authorization" in [p["name"] for p in op["parameters"]]
