@@ -44,7 +44,7 @@ Keys are prefixed `audit_` so they cannot collide with the layout's `tenant`, `a
 | `audit_result` | `Result` (pipe) or `Outcome` (equals) | as logged (`Success`, `Failed`); consumers compare case-insensitively |
 | `audit_actor` | `Initiator` | a leading `<STOREDOMAIN>/` (e.g. `PRIMARY/`) is removed |
 | `audit_target` | `Target` | as logged |
-| `audit_user` | `"AuthenticatedUser"` in Data | same domain-prefix rule; present on logins only |
+| `audit_user` | `"AuthenticatedUser"` in Data | same domain-prefix rule; present wherever the line has it (logins and session actions) |
 | `audit_application` | `"ServiceProviderName"` in Data | present only when the line has it |
 
 A key is omitted when its value is missing or empty. Nothing else from Data is stored; in particular not `Claims`
