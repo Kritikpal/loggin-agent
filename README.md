@@ -95,6 +95,27 @@ stored at once and searchable by keyword immediately; a loop inside the app adds
 `PUSH_EMBED_INTERVAL_SECONDS` (default 5). They appear in the project's files list as `push`. Send the token over
 HTTPS (put the app behind TLS); `push` is a reserved file id for projects that enable this.
 
+## Audit fields and user pseudonyms
+
+For WSO2 projects (`type: wso2`), every `AUDIT_LOG` event gets these fields in `log_events.fields`, so actions can be
+counted exactly instead of read from samples: `audit_action` (e.g. `Login`), `audit_result` (`Success` or `Failed`; a
+failed login is an INFO line), `audit_actor` (the initiator), `audit_target`, `audit_user` (the authenticated user, where
+the line has one) and `audit_application` (the `ServiceProviderName`, where present). A `PRIMARY/` user-store prefix is
+removed. Only these values are kept, never the roles or groups in the claims. Both audit line shapes are understood.
+
+E-mail addresses are always hidden. Set `PSEUDONYM_KEY` in `.env` and each address becomes `[REDACTED:email:u1a2b3c4d5e6]`:
+the same address always gets the same code, so people can be counted without being named. Create a key with
+`python -c "import secrets; print(secrets.token_urlsafe(32))"` and keep it secret: anyone holding it can test a guessed
+address against the codes, and changing it changes every code. Without a key the mask has no code and all hidden people
+look alike (the server logs one warning at start). Rows stored before the key was set keep the plain mask: their
+addresses are already gone. Restart the server after changing `.env`.
+
+Fill the fields of events stored earlier (files and pushed events; text, embeddings and signatures are not touched):
+
+```
+.venv/Scripts/python -m scripts.backfill_fields --project wso2-gateway
+```
+
 ## Searching logs
 
 `POST /api/v1/projects/{project_id}/search-logs` (read-only; no LLM):
