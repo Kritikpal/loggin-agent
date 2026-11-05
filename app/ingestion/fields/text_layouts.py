@@ -102,7 +102,8 @@ def resolve_text_event(text: str, tz_name: str) -> tuple[Found, dict[str, object
             found.setdefault(name, value)
     fields = layout.fields
     if layout.name == "wso2_carbon" and layout.found["logger"][0] == AUDIT_LOGGER:
-        fields = fields | audit_fields(message)  # action, result, actor, target, user, application
+        # Whole lines, not `message`: that is capped at 8 KiB and the verdict ends a Data block of any length.
+        fields = fields | audit_fields("\n".join(lines[:end]))
     return found, fields
 
 

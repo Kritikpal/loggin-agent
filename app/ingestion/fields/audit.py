@@ -9,25 +9,30 @@ Pure and deterministic; every pattern is linear-time and sees at most SCAN_CHARS
 
 import re
 
-SCAN_CHARS = 16 * 1024
+SCAN_CHARS = 16 * 1024  # the keys that open a message are looked for here
+TAIL_CHARS = 4 * 1024  # and the verdict, which closes it, in the last TAIL_CHARS of a longer message
 MAX_VALUE_CHARS = 256
 
 # A header value is a whole redaction mask (it holds ':' but no spaces) or a run up to whitespace or the '|' separator.
 _HEADER_VALUE = r"(\[REDACTED:[^\]\n]{1,64}\]|[^\s|]{1,256})"
-_ACTION = re.compile(r"\bAction\s*[:=]\s*([A-Za-z][A-Za-z-]{0,63})")
+_ACTION = re.compile(r"\bAction\s*[:=]\s*([A-Za-z][A-Za-z0-9-]{0,63})")
 _RESULT = re.compile(r"\b(?:Result|Outcome)\s*[:=]\s*([A-Za-z]{1,32})")
 _ACTOR = re.compile(rf"\bInitiator\s*[:=]\s*{_HEADER_VALUE}")
 _TARGET = re.compile(rf"\bTarget\s*[:=]\s*{_HEADER_VALUE}")
 _USER = re.compile(r'"AuthenticatedUser"\s*:\s*"([^"\\\n]{1,256})"')
 _APPLICATION = re.compile(r'"ServiceProviderName"\s*:\s*"([^"\\\n]{1,256})"')
-_STORE_DOMAIN = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,31}/(?=.)")  # "PRIMARY/admin" -> "admin"
+# "PRIMARY/admin" -> "admin". Only an upper-case user-store domain: "Internal/admin" and "Application/x" are roles, not
+# users, and keep their prefix. ponytail: a secondary store with a lower-case name is not stripped; add it when seen.
+_STORE_DOMAIN = re.compile(r"^[A-Z][A-Z0-9_.-]{0,31}/(?=.)")
 
 
 def audit_fields(message: str) -> dict[str, str]:
     """The `audit_*` fields found in the message; a key is left out when its value is missing. Never raises."""
     try:
         text = message[:SCAN_CHARS]
-        results = list(_RESULT.finditer(text))  # the verdict is the last one: the Data block may mention the word too
+        # The verdict is the last token of both shapes, after a Data block that can be many KiB (admin claims), so on a
+        # long message it is looked up in the tail. The last match wins: the Data block may mention the word too.
+        results = list(_RESULT.finditer(message if len(message) <= SCAN_CHARS else message[-TAIL_CHARS:]))
         values = {
             "audit_action": _first(_ACTION, text),
             "audit_result": results[-1][1] if results else None,
