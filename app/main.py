@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -10,10 +11,15 @@ from app.core.config import get_settings
 from app.core.database import SessionLocal, engine
 from app.core.errors import register_exception_handlers
 from app.ingestion.embed_loop import run_embed_loop
+from app.ingestion.pseudonym import configured_pseudonym_key
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    if configured_pseudonym_key() is None:  # one line at start; never the key or an address
+        logger.warning("PSEUDONYM_KEY is not set: e-mail addresses are masked without a per-person code")
     embedder = asyncio.create_task(run_embed_loop(SessionLocal, interval=get_settings().push_embed_interval_seconds))
     try:
         yield

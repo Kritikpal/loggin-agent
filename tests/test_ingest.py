@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from datetime import UTC, datetime
 
 import pytest
@@ -317,3 +318,76 @@ def test_openapi_documents_the_body_and_the_token_header():
     assert body["content"]["application/json"]["schema"]["items"]["required"] == ["message"]
     assert "application/x-ndjson" in body["content"]
     assert "authorization" in [p["name"] for p in op["parameters"]]
+
+
+# --- audit fields and e-mail pseudonyms ---
+
+AUDIT_LOGIN = (
+    "TID: [-1234] [] [2026-11-05 16:03:26,686] [f39cb36f]  INFO {{AUDIT_LOG}} - Initiator : {who} | Action : Login | "
+    'Target : ApplicationAuthenticationFramework | Data : {{ "AuthenticatedUser" : "{who}",'
+    '"ServiceProviderName" : "Console" }} | Result : Success'
+)
+CODED = r"\[REDACTED:email:u[0-9a-f]{11}\]"
+
+
+def use_pseudonym_key(monkeypatch, key: bytes | None) -> None:
+    monkeypatch.setattr("app.ingestion.pipeline.configured_pseudonym_key", lambda: key)
+    monkeypatch.setattr("app.ingestion.push.configured_pseudonym_key", lambda: key)
+
+
+async def test_pushed_audit_line_stores_audit_fields_with_a_coded_user(session_factory, monkeypatch):
+    use_pseudonym_key(monkeypatch, b"test-key")
+    async with projects_client(session_factory, (push_project(),)) as http:
+        res = await push(http, [{"message": AUDIT_LOGIN.format(who="a@x.com")}])
+    assert res.json()["stored"] == 1
+    (stored,) = await rows(session_factory)
+    assert "a@x.com" not in stored.raw_text
+    fields = stored.fields
+    assert fields["audit_actor"] == fields["audit_user"]
+    assert re.fullmatch(CODED, fields["audit_user"])
+    assert (fields["audit_action"], fields["audit_application"], fields["audit_result"]) == ("Login", "Console", "Success")
+
+
+async def test_two_users_have_one_signature_and_two_codes(session_factory, monkeypatch):
+    use_pseudonym_key(monkeypatch, b"test-key")
+    batch = [{"message": AUDIT_LOGIN.format(who=who)} for who in ("a@x.com", "b@x.com")]
+    async with projects_client(session_factory, (push_project(),)) as http:
+        await push(http, batch)
+    first, second = await rows(session_factory)
+    assert first.signature == second.signature
+    assert first.fields["audit_user"] != second.fields["audit_user"]
+
+
+async def test_the_same_person_keeps_one_code_across_pushes(session_factory, monkeypatch):
+    use_pseudonym_key(monkeypatch, b"test-key")
+    batch = [{"message": AUDIT_LOGIN.format(who="Bob@X.com"), "timestamp": "2026-11-05T10:00:00Z"}]
+    again = [{"message": AUDIT_LOGIN.format(who="bob@x.com"), "timestamp": "2026-11-05T11:00:00Z"}]
+    async with projects_client(session_factory, (push_project(),)) as http:
+        await push(http, batch)
+        await push(http, again)
+    first, second = await rows(session_factory)
+    assert first.fields["audit_user"] == second.fields["audit_user"]
+
+
+async def test_without_a_key_the_plain_mask_is_stored(session_factory, monkeypatch):
+    use_pseudonym_key(monkeypatch, None)
+    async with projects_client(session_factory, (push_project(),)) as http:
+        await push(http, [{"message": AUDIT_LOGIN.format(who="a@x.com")}])
+    (stored,) = await rows(session_factory)
+    assert stored.fields["audit_user"] == "[REDACTED:email]" and "a@x.com" not in stored.raw_text
+
+
+@pytest.mark.parametrize(("key", "warnings"), [(None, 1), (b"k", 0)])
+async def test_lifespan_warns_once_when_the_key_is_missing(monkeypatch, caplog, key, warnings):
+    from app import main
+
+    async def idle(*args, **kwargs):
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(main, "run_embed_loop", idle)
+    monkeypatch.setattr(main, "configured_pseudonym_key", lambda: key)
+    with caplog.at_level("WARNING", logger="app.main"):
+        async with main.lifespan(main.app):
+            pass
+    assert len([r for r in caplog.records if "PSEUDONYM_KEY" in r.getMessage()]) == warnings
+    assert b"k" not in caplog.text.encode() or key is None  # the key itself is never logged

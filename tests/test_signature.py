@@ -124,3 +124,15 @@ def test_short_hex_ids_are_values_but_plain_words_are_not():
 
     assert a.sig == b.sig and "/js/main.<*>.chunk.js" in a.template
     assert "deadbeef" in sig("cache deadbeef added").template  # hex letters but no digit: a word, kept
+
+
+def test_users_with_different_pseudonym_codes_share_a_signature():
+    a = sig("login failed for [REDACTED:email:u11111111111]")
+    b = sig("login failed for [REDACTED:email:u2a3b4c5d6e7]")
+    assert (a.sig, a.template) == (b.sig, b.template)
+    assert "[REDACTED:email]" in a.template and ":u" not in a.template
+
+
+def test_a_coded_mask_gives_the_same_signature_as_the_plain_mask():
+    # rows stored before pseudonyms existed keep their signature
+    assert sig("login failed for [REDACTED:email:u11111111111]") == sig("login failed for [REDACTED:email]")

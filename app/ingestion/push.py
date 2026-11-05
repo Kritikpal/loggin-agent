@@ -22,6 +22,7 @@ from app.ingestion.assembler import RawEvent
 from app.ingestion.pipeline import prepare_event
 from app.ingestion.projects import NOT_FOUND
 from app.ingestion.readers.base import SourceEvent
+from app.ingestion.pseudonym import configured_pseudonym_key
 from app.ingestion.redaction import redact
 from app.ingestion.sanitize import sanitize
 from app.ingestion.sources import PushSource
@@ -106,7 +107,7 @@ def _row(event: PushEvent, source: PushSource) -> EventRow | None:
     cleaned = sanitize(event.message).strip("\n")
     if not cleaned.strip():
         return None
-    text = redact(cleaned).text[:MAX_MESSAGE_CHARS]  # clip after redaction: a cut secret may escape it
+    text = redact(cleaned, pseudonym_key=configured_pseudonym_key()).text[:MAX_MESSAGE_CHARS]  # clip after redaction: a cut secret may escape it
     raw = RawEvent(text, 0, 0, 1, 1 + text.count("\n"), False)
     row = prepare_event(SourceEvent(raw, push_event_key(text, event.timestamp), LOCATOR), source)
     sent_at = _sender_time(event.timestamp, source.timezone)

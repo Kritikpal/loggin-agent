@@ -28,6 +28,7 @@ from app.core.embeddings import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL, embed_doc
 from app.ingestion.fields.resolver import resolve
 from app.ingestion.readers.base import ReadResult, SourceEvent
 from app.ingestion.readers.file_reader import FileReader
+from app.ingestion.pseudonym import configured_pseudonym_key
 from app.ingestion.redaction import redact
 from app.ingestion.semantic_text import MAX_TEXT_CHARS, build_semantic_text
 from app.ingestion.sources import FileSource, Source, SourceBase
@@ -139,7 +140,7 @@ async def _store_batch(
 
 def prepare_event(event: SourceEvent, source: SourceBase) -> EventRow:
     # Redaction first, and outside the guard: if it fails nothing may be stored, so the whole run fails instead.
-    text = redact(event.event.text).text
+    text = redact(event.event.text, pseudonym_key=configured_pseudonym_key()).text
     unparsed = event_signature(level=None, logger=None, message=None, raw_text=text)
     base = EventRow(event.event_key, dict(event.locator), None, None, text, {}, text[:MAX_TEXT_CHARS],
                     signature=unparsed.sig, signature_template=unparsed.template)

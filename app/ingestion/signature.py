@@ -40,6 +40,7 @@ _VARIABLE = (  # applied in order: the specific shapes before the plain numbers 
     re.compile(r"\b\d+(?:\.\d+)?(?:ms|s|sec|secs|min|h|b|kb|mb|gb)\b", re.I),  # 172288623ms, 30s, 512KB
     re.compile(r"\b\d+(?:[.,:]\d+)*\b"),  # numbers, times, durations
 )
+_CODED_MASK = re.compile(r"\[REDACTED:([a-z_]+):u[0-9a-f]{11}\]")  # app.ingestion.pseudonym
 _EXCEPTION = re.compile(r"\b(?:[A-Za-z_$][\w$]*\.)+[A-Z][\w$]*(?:Exception|Error)\b")
 _ROOT_TAIL = re.compile(r"\s*\[Root exception", re.I)
 _QUALIFIED = re.compile(r"\b(?:[a-z_$][\w$]*\.)+([A-Z][\w$]*)")  # org.wso2.x.UserStoreException -> UserStoreException
@@ -69,7 +70,7 @@ def signature_for(text: str, source: SourceBase) -> Signature:
 
 def _template(level: str | None, logger: str | None, body: str) -> str:
     head = f"{level or '-'} {{{logger.rsplit('.', 1)[-1]}}} -" if logger else (level or "-")
-    text = _cut(body)
+    text = _cut(_CODED_MASK.sub(r"[REDACTED:\1]", body))  # a pseudonym code tells people apart, not kinds of event
     for pattern in _VARIABLE:
         text = pattern.sub(PLACEHOLDER, text)
     text = _QUALIFIED.sub(r"\1", text)
