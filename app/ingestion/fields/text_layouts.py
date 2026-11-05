@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
 
+from app.ingestion.fields.audit import audit_fields
 from app.ingestion.fields.model import TEXT_SOURCE, Found, Method, Provenance
 from app.ingestion.fields.text_fields import MAX_SCAN_CHARS, MAX_VALUE_CHARS, resolve_text
 from app.ingestion.fields.values import EXCEPTION_LINE, ISO_TIMESTAMP, LEVELS, timestamp_from_match
@@ -44,6 +45,7 @@ LAYOUTS = (  # tried in order; the first match wins
     ("spring_boot", SPRING_BOOT), ("logback_default", LOGBACK_DEFAULT), ("wso2_carbon", WSO2_CARBON),
 )
 LAYOUT_FIELDS = frozenset({"occurred_at", "level", "logger", "message"})
+AUDIT_LOGGER = "AUDIT_LOG"  # WSO2's audit logger: its messages carry the audit_* fields
 
 
 @dataclass(frozen=True)
@@ -98,7 +100,10 @@ def resolve_text_event(text: str, tz_name: str) -> tuple[Found, dict[str, object
     for name, value in recognised.items():  # e.g. trace/request id pairs: they fill gaps only
         if name not in LAYOUT_FIELDS:
             found.setdefault(name, value)
-    return found, layout.fields
+    fields = layout.fields
+    if layout.name == "wso2_carbon" and layout.found["logger"][0] == AUDIT_LOGGER:
+        fields = fields | audit_fields(message)  # action, result, actor, target, user, application
+    return found, fields
 
 
 def _parse_layout(line: str, tz_name: str) -> _Layout | None:
