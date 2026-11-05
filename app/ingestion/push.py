@@ -28,7 +28,6 @@ from app.ingestion.sources import PushSource
 from app.ingestion.store import EventRow
 from app.schemas.ingest import PushEvent
 
-MAX_BODY_BYTES = 1024 * 1024
 MAX_EVENTS = 1000
 MAX_MESSAGE_CHARS = 256 * 1024  # the same cap a file event gets (AssemblyLimits.max_chars)
 # The level names the agent ranks (app.agent.tools.common.LEVEL_RANKS); any other level a sender makes up is dropped.
@@ -51,14 +50,15 @@ def check_token(source: PushSource, authorization: str | None) -> None:
 
 async def read_body(request: Request) -> bytes:
     """The body, stopping as soon as it is over the limit instead of buffering what a client keeps sending."""
+    limit = get_settings().push_max_body_bytes
     declared = request.headers.get("content-length", "")
-    if declared.isdigit() and int(declared) > MAX_BODY_BYTES:
-        raise PayloadTooLargeError(f"The body is over {MAX_BODY_BYTES} bytes.")
+    if declared.isdigit() and int(declared) > limit:
+        raise PayloadTooLargeError(f"The body is over {limit} bytes (PUSH_MAX_BODY_BYTES).")
     chunks, size = [], 0
     async for chunk in request.stream():
         size += len(chunk)
-        if size > MAX_BODY_BYTES:
-            raise PayloadTooLargeError(f"The body is over {MAX_BODY_BYTES} bytes.")
+        if size > limit:
+            raise PayloadTooLargeError(f"The body is over {limit} bytes (PUSH_MAX_BODY_BYTES).")
         chunks.append(chunk)
     return b"".join(chunks)
 

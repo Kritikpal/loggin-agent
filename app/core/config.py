@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     # GROQ_API_KEY, then GROQ_API_KEY_1, _2, ... in number order; blanks and repeats dropped. Filled below.
     groq_api_keys: list[str] = Field(default_factory=list)
     logs_root: Path = ROOT_DIR / "logs"  # one folder per project, each with a project.yaml; override with LOGS_ROOT
+    push_max_body_bytes: int = 10 * 1024 * 1024  # largest ingest request body (413 above); override with PUSH_MAX_BODY_BYTES
     push_embed_interval_seconds: float = 5.0  # how often pushed events get their vectors; override with PUSH_EMBED_INTERVAL_SECONDS
     groq_model: str ="openai/gpt-oss-120b"  # must support tool calling; override with GROQ_MODEL
     # a stable place for the downloaded model (the OS temp dir can be cleaned); override with EMBEDDING_CACHE_DIR

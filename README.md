@@ -83,7 +83,7 @@ curl -X POST http://localhost:8000/api/v1/projects/wso2-gateway/ingest \
 
 The body is a JSON list of events (or NDJSON with `Content-Type: application/x-ndjson`); `message` is required,
 `timestamp` (ISO 8601; no zone = the project's timezone) and `level` are optional. The reply is
-`{"received": 2, "stored": 2, "duplicates": 0}`. Limits: 1 MiB and 1000 events per request (`413` above that);
+`{"received": 2, "stored": 2, "duplicates": 0}`. Limits: 10 MiB (`PUSH_MAX_BODY_BYTES`) and 1000 events per request (`413` above either; the message says which);
 `401` for a missing or wrong token; `404` for an unknown project, a project without `push_token_env`, or an unset
 variable; `409` for an invalid project; `422` for a malformed body; `503` when the database is down (retry).
 

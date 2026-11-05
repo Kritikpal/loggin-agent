@@ -113,12 +113,25 @@ async def test_too_many_events_is_413(session_factory):
     assert ok.status_code == 200 and res.status_code == 413
 
 
-async def test_oversize_body_is_413(session_factory):
-    body = b'[{"message": "' + b"a" * (1024 * 1024) + b'"}]'
+def with_body_limit(monkeypatch, limit: int) -> None:
+    settings = Settings(_env_file=None, database_url="postgresql://u@h/db", push_max_body_bytes=limit)
+    monkeypatch.setattr("app.ingestion.push.get_settings", lambda: settings)
+
+
+async def test_body_over_the_configured_limit_is_413(session_factory, monkeypatch):
+    with_body_limit(monkeypatch, 2048)
+    body = b'[{"message": "' + b"a" * 3000 + b'"}]'
     async with projects_client(session_factory, (push_project(),)) as http:
         res = await push(http, body)
     assert res.status_code == 413
     assert await rows(session_factory) == []
+
+
+async def test_a_body_over_one_mib_is_accepted_by_default(session_factory):
+    events = [{"message": f"{i} " + "a" * 300_000} for i in range(5)]  # about 1.5 MiB, each message under its own cap
+    async with projects_client(session_factory, (push_project(),)) as http:
+        res = await push(http, events)
+    assert res.status_code == 200 and res.json()["stored"] == 5
 
 
 @pytest.mark.parametrize("body", [
