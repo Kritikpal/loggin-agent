@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # GROQ_API_KEY, then GROQ_API_KEY_1, _2, ... in number order; blanks and repeats dropped. Filled below.
     groq_api_keys: list[str] = Field(default_factory=list)
     logs_root: Path = ROOT_DIR / "logs"  # one folder per project, each with a project.yaml; override with LOGS_ROOT
+    # Secret that turns each e-mail mask into [REDACTED:email:u...], a stable code per address (see app.ingestion.pseudonym).
+    # Unset = e-mails are masked with no code. Changing it changes every code. Override with PSEUDONYM_KEY
+    pseudonym_key: str | None = None
     push_max_body_bytes: int = 10 * 1024 * 1024  # largest ingest request body (413 above); override with PUSH_MAX_BODY_BYTES
     # most events in one ingest request (413 above); about 2000 events/s are processed, so 20000 is ~10 s of work.
     # Override with PUSH_MAX_EVENTS

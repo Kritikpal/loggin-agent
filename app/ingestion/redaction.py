@@ -19,11 +19,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
 
+from app.ingestion.pseudonym import email_code
+
 MAX_VALUE_SPAN = 4096  # the longest value one key/value rule will mask in one go; also bounds the work per key
 CARD_MIN_DIGITS, CARD_MAX_DIGITS = 14, 19
 
 _FORMAT_CHARS = re.compile("[­​-‏‪-‮⁠-⁤⁦-⁩﻿]")
-_ALREADY_MASKED = re.compile(r"""(?:\\?["'])?\[REDACTED:[a-z_]+\](?:\\?["'])?""")
+_ALREADY_MASKED = re.compile(r"""(?:\\?["'])?\[REDACTED:[a-z_]+(?::u[0-9a-f]{11})?\](?:\\?["'])?""")
 _SECRET_NAMES = (
     r"(?:password|passwd|passphrase|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential)"
 )
@@ -207,6 +209,7 @@ def _just(kind: str) -> Callable[[re.Match[str]], str]:
     return lambda match: _mask(kind)
 
 
+_EMAIL = re.compile(r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}")
 _BEFORE_PAIRS = (("private_key", re.compile(_PEM), _just("private_key")),)
 _AFTER_PAIRS = (
     ("jwt", re.compile(r"\beyJ[\w-]{5,}\.[\w-]{5,}\.[\w-]*"), _just("jwt")),
@@ -215,8 +218,16 @@ _AFTER_PAIRS = (
         r"(?i)\b(?:sk-|gsk_|ghp_|gho_|ghu_|ghs_|github_pat_|glpat-|xox[abprs]-)[A-Za-z0-9_-]{16,}"), _just("api_key")),
     # userinfo runs to the LAST "@" before the path, so a password containing "@" is masked whole; before emails
     ("credentials", re.compile(r"(://)[^/\s:@]{1,256}:[^/\s]{1,256}@"), lambda m: m.group(1) + _mask("credentials") + "@"),
-    ("email", re.compile(r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}"), _just("email")),
+    ("email", _EMAIL, _just("email")),
 )
+
+
+def _after_pairs(pseudonym_key: bytes | None):
+    """The rules after the key/value pass. With a key the e-mail mask carries a stable code for that address."""
+    if pseudonym_key is None:
+        return _AFTER_PAIRS
+    coded = lambda match: f"[REDACTED:email:{email_code(pseudonym_key, match.group(0))}]"  # noqa: E731
+    return (*_AFTER_PAIRS[:-1], ("email", _EMAIL, coded))
 
 
 def _apply(text: str, rules, kinds: set[str]) -> str:
@@ -227,11 +238,13 @@ def _apply(text: str, rules, kinds: set[str]) -> str:
     return text
 
 
-def redact(text: str) -> RedactionResult:
+def redact(text: str, *, pseudonym_key: bytes | None = None) -> RedactionResult:
+    """Without a key every e-mail becomes `[REDACTED:email]`; with one, `[REDACTED:email:u<11 hex>]`, the same code for
+    the same address (app.ingestion.pseudonym)."""
     kinds: set[str] = set()
     text = unicodedata.normalize("NFKC", _FORMAT_CHARS.sub("", text))
     text = _apply(text, _BEFORE_PAIRS, kinds)
     for rule in _PAIR_RULES:
         text = _redact_pairs(text, rule, kinds)
-    text = _apply(text, _AFTER_PAIRS, kinds)
+    text = _apply(text, _after_pairs(pseudonym_key), kinds)
     return RedactionResult(text=_redact_cards(text, kinds), kinds=frozenset(kinds))
