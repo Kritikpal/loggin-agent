@@ -2,11 +2,11 @@
 
 Date: 2026-11-05 · Status: draft for review · Branch: feat/ai-action-approval-workflow
 
-## Decision to confirm before building
+## Decision (confirmed 2026-11-05)
 
-Hidden users (section 4). This spec assumes **B: stable pseudonyms for e-mail addresses**, because the questions
-"who is the most frequent user" and "user login report" need to tell people apart. If you choose **A** instead (keep
-`[REDACTED:email]` and let the agent say "unknown users"), delete section 4; nothing else changes.
+Hidden users (section 4): **B, stable pseudonyms for e-mail addresses**, because the questions "who is the most frequent
+user" and "user login report" need to tell people apart. (Option A, keeping `[REDACTED:email]` and letting the agent say
+"unknown users", was not chosen.)
 
 ## Goal
 
@@ -61,18 +61,20 @@ The function never raises (the resolver's existing guard still wraps it).
 ### 4. Hidden users: stable pseudonyms (option B)
 
 Today the e-mail rule in `app/ingestion/redaction.py` replaces every address with `[REDACTED:email]`, so all hidden people
-look like one user. With B the mask carries a code: `[REDACTED:email:ab12cd34ef56]`.
+look like one user. With B the mask carries a code: `[REDACTED:email:u1a2b3c4d5e6]`.
 
-- Code = first 12 hex characters of `HMAC-SHA256(key, lower-cased address)`. The same address always gives the same code;
-  the address cannot be read back without the key.
+- Code = the letter `u` followed by the first 11 hex characters of `HMAC-SHA256(key, lower-cased address)`. The same
+  address always gives the same code; the address cannot be read back without the key. The letter matters: the card-number
+  rule runs after the e-mail rule and looks at runs of digits, so a code that happened to be all digits could be
+  rewritten as `[REDACTED:card]` and break the mask. A leading letter makes that impossible.
 - The key is a new setting `PSEUDONYM_KEY` (in `.env`). **Without a key the mask stays `[REDACTED:email]`** (today's
   behaviour) and one warning is logged at startup, so a missing key never weakens redaction.
 - `_ALREADY_MASKED` and the mask-aware scanner in `redaction.py` must accept the optional `:code`, so redaction stays
   idempotent (the push path redacts twice).
 - `app/ingestion/signature.py` must first reduce `[REDACTED:<kind>:<code>]` to `[REDACTED:<kind>]`, so every user of
   one kind of event keeps one signature. Existing rows are unaffected (their masks have no code).
-- `audit_actor` and `audit_user` then hold `[REDACTED:email:ab12cd34ef56]` for hidden people and the plain name for the
-  rest. Rows stored before this change keep the bare `[REDACTED:email]`: their addresses are already gone and cannot be
+- `audit_actor` and `audit_user` then hold `[REDACTED:email:u1a2b3c4d5e6]` for hidden people and the plain name for the
+  rest. The "missing key" warning is logged once, at app start (`lifespan`). Rows stored before this change keep the bare `[REDACTED:email]`: their addresses are already gone and cannot be
   recovered. Step 2 shows those as "unknown (hidden)".
 
 Trade-offs, stated plainly: anyone holding the key can test a guessed address against the codes, so the key is a secret
@@ -104,7 +106,7 @@ pytest, in the existing style:
 - Layout: only `wso2_carbon` + `AUDIT_LOG` lines get audit keys; other loggers and other layouts do not.
 - Redaction: same address gives the same code, different addresses different codes, case-insensitive; a different key
   gives a different code; no key gives the plain mask and one warning; redacting twice changes nothing; the code never
-  contains the address.
+  contains the address, always starts with `u`, and is never rewritten by the card rule (checked over many addresses).
 - Signature: two events differing only in the hidden user have one signature; pre-change signatures are unchanged.
 - Integration: a pushed audit line shows the `audit_*` keys in `log_events.fields`; the backfill fills old rows and a
   second run changes nothing.
