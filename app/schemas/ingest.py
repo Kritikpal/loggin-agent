@@ -1,24 +1,16 @@
-from pydantic import BaseModel, field_validator
-
-from app.ingestion.sanitize import sanitize
+from pydantic import BaseModel
 
 
 class PushEvent(BaseModel):
-    """One pushed log event. Keys other than these are ignored."""
+    """One pushed log event. Keys other than these are ignored. A blank `message` is skipped, not rejected."""
 
     message: str
     timestamp: str | None = None  # ISO 8601; a naive time is read in the project's timezone
     level: str | None = None
 
-    @field_validator("message")
-    @classmethod
-    def _not_blank(cls, value: str) -> str:
-        if not sanitize(value).strip():  # what is left once control characters are removed is what gets stored
-            raise ValueError("message must not be blank")
-        return value
-
 
 class IngestResponse(BaseModel):
-    received: int
+    received: int  # every event in the request: stored + duplicates + skipped
     stored: int
     duplicates: int
+    skipped: int  # blank messages, which are never stored

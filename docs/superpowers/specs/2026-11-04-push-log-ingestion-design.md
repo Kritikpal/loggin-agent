@@ -54,7 +54,9 @@ as a row named `push`.
 - **Body:** `application/json` list of events, or `application/x-ndjson`. Event: `{"message": str, "timestamp"?: str,
   "level"?: str}`. Extra keys are ignored.
 - **Limits:** body at most 10 MiB (setting `PUSH_MAX_BODY_BYTES`; it was 1 MiB at first), at most 20000 events (setting `PUSH_MAX_EVENTS`; it was 1000 at first, which Fluent Bit's batches exceeded), a message longer than 256 KiB (the cap a file event gets) is clipped after
-  redaction, not rejected. A `message` that is empty after control characters are removed is a 422. Over the body or count limit: 413.
+  redaction, not rejected. A `message` that is empty after control characters are removed is skipped, not rejected: it is counted in the
+  reply's `skipped`, not stored, and one warning per request (the count, never content) is logged. The reply is
+  `{received, stored, duplicates, skipped}` with received = stored + duplicates + skipped. Over the body or count limit: 413.
 - **Reply 200:** `{"received": n, "stored": n, "duplicates": n}`. Pydantic response model.
 - **Errors:** malformed body 422; database unreachable 503 (sender should retry; any other database error is a 500).
   An invalid project is a 409 only after the token checks out. The token is looked up in the environment, then in the

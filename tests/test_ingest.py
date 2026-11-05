@@ -45,7 +45,7 @@ async def test_push_stores_events(session_factory):
     async with projects_client(session_factory, (push_project(),)) as http:
         res = await push(http, [{"message": "first"}, {"message": "second"}])
     assert res.status_code == 200
-    assert res.json() == {"received": 2, "stored": 2, "duplicates": 0}
+    assert res.json() == {"received": 2, "stored": 2, "duplicates": 0, "skipped": 0}
     stored = await rows(session_factory)
     assert {r.source_id for r in stored} == {"demo/push"}
     assert all(r.embedding is None and r.locator == {"kind": "push"} for r in stored)
@@ -56,7 +56,7 @@ async def test_same_batch_twice_is_deduplicated(session_factory):
     async with projects_client(session_factory, (push_project(),)) as http:
         await push(http, batch)
         res = await push(http, batch)
-    assert res.json() == {"received": 2, "stored": 0, "duplicates": 2}
+    assert res.json() == {"received": 2, "stored": 0, "duplicates": 2, "skipped": 0}
     assert len(await rows(session_factory)) == 2
 
 
@@ -64,7 +64,7 @@ async def test_duplicate_inside_one_batch(session_factory):
     event = {"message": "same"}
     async with projects_client(session_factory, (push_project(),)) as http:
         res = await push(http, [event, event])
-    assert res.json() == {"received": 2, "stored": 1, "duplicates": 1}
+    assert res.json() == {"received": 2, "stored": 1, "duplicates": 1, "skipped": 0}
 
 
 async def test_secret_is_redacted_and_deduplicates(session_factory):
@@ -145,8 +145,7 @@ async def test_a_body_over_one_mib_is_accepted_by_default(session_factory):
 
 
 @pytest.mark.parametrize("body", [
-    b"{", b"\xff\xfe", b'{"message": "x"}', b'[{"level": "x"}]', b'[{"message": ""}]', b'[{"message": "   "}]',
-    b'["just text"]',
+    b"{", b"\xff\xfe", b'{"message": "x"}', b'[{"level": "x"}]', b'["just text"]',
 ])
 async def test_malformed_bodies_are_422(session_factory, body):
     async with projects_client(session_factory, (push_project(),)) as http:
@@ -231,12 +230,40 @@ async def test_timestamps_at_the_edge_of_the_range_are_not_a_500(session_factory
     assert res.status_code == 200 and res.json()["stored"] == 2
 
 
-@pytest.mark.parametrize("message", ["\u0000\u0000", "[31m", "\u200b"])
-async def test_message_that_sanitizes_to_nothing_is_422(session_factory, message):
+BLANKS = ["", "   ", "\n\t", "\u0000\u0000", "\x1b[31m", "\u200b"]  # empty, whitespace, control characters only
+
+
+@pytest.mark.parametrize("blank", BLANKS)
+async def test_a_blank_message_is_skipped_and_the_rest_of_the_batch_is_stored(session_factory, blank):
     async with projects_client(session_factory, (push_project(),)) as http:
-        res = await push(http, [{"message": message}])
-    assert res.status_code == 422
+        res = await push(http, [{"message": blank}, {"message": "real event"}])
+    assert res.status_code == 200
+    assert res.json() == {"received": 2, "stored": 1, "duplicates": 0, "skipped": 1}
+    assert [r.raw_text for r in await rows(session_factory)] == ["real event"]
+
+
+async def test_blank_messages_log_one_warning_per_request_without_content(session_factory, caplog):
+    batch = [{"message": blank} for blank in BLANKS] + [{"message": "real event"}]
+    with caplog.at_level("WARNING", logger="app.controllers.ingest"):
+        async with projects_client(session_factory, (push_project(),)) as http:
+            await push(http, batch)
+    warnings = [r.getMessage() for r in caplog.records if "blank" in r.getMessage()]
+    assert len(warnings) == 1
+    assert f"{len(BLANKS)} blank" in warnings[0] and "demo/push" in warnings[0]
+
+
+async def test_a_batch_of_only_blank_messages_is_ok_and_stores_nothing(session_factory):
+    async with projects_client(session_factory, (push_project(),)) as http:
+        res = await push(http, [{"message": ""}, {"message": " "}])
+    assert res.json() == {"received": 2, "stored": 0, "duplicates": 0, "skipped": 2}
     assert await rows(session_factory) == []
+
+
+async def test_a_batch_without_blank_messages_logs_no_warning(session_factory, caplog):
+    with caplog.at_level("WARNING", logger="app.controllers.ingest"):
+        async with projects_client(session_factory, (push_project(),)) as http:
+            await push(http, [{"message": "real event"}])
+    assert not [r for r in caplog.records if "blank" in r.getMessage()]
 
 
 async def test_long_message_is_clipped(session_factory):

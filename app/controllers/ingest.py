@@ -59,4 +59,7 @@ async def ingest(
         # The class name only: the message can carry log content.
         logger.warning("Storing pushed events of %s failed: %s", source.id, type(exc).__name__)
         raise StorageUnavailableError("The log store is unavailable; retry later.") from None
-    return IngestResponse(received=len(rows), stored=stored, duplicates=len(rows) - stored)
+    skipped = len(events) - len(rows)
+    if skipped:  # one line per request, with the count only: log content stays out of the logs
+        logger.warning("Skipped %d blank events pushed to %s", skipped, source.id)
+    return IngestResponse(received=len(events), stored=stored, duplicates=len(rows) - stored, skipped=skipped)

@@ -96,12 +96,17 @@ def push_event_key(redacted_text: str, sender_timestamp: str | None) -> str:
 
 
 def build_push_rows(events: Sequence[PushEvent], source: PushSource) -> list[EventRow]:
-    """CPU-bound (redaction, parsing): call it from a worker thread."""
-    return [_row(event, source) for event in events]
+    """One row per event with text; blank events (nothing left once control characters go) give no row.
+    CPU-bound (redaction, parsing): call it from a worker thread."""
+    rows = (_row(event, source) for event in events)
+    return [row for row in rows if row is not None]
 
 
-def _row(event: PushEvent, source: PushSource) -> EventRow:
-    text = redact(sanitize(event.message).strip("\n")).text[:MAX_MESSAGE_CHARS]  # clip after redaction: a cut secret may escape it
+def _row(event: PushEvent, source: PushSource) -> EventRow | None:
+    cleaned = sanitize(event.message).strip("\n")
+    if not cleaned.strip():
+        return None
+    text = redact(cleaned).text[:MAX_MESSAGE_CHARS]  # clip after redaction: a cut secret may escape it
     raw = RawEvent(text, 0, 0, 1, 1 + text.count("\n"), False)
     row = prepare_event(SourceEvent(raw, push_event_key(text, event.timestamp), LOCATOR), source)
     sent_at = _sender_time(event.timestamp, source.timezone)
