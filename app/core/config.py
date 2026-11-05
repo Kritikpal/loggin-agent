@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     groq_api_keys: list[str] = Field(default_factory=list)
     logs_root: Path = ROOT_DIR / "logs"  # one folder per project, each with a project.yaml; override with LOGS_ROOT
     push_max_body_bytes: int = 10 * 1024 * 1024  # largest ingest request body (413 above); override with PUSH_MAX_BODY_BYTES
+    # most events in one ingest request (413 above); about 2000 events/s are processed, so 20000 is ~10 s of work.
+    # Override with PUSH_MAX_EVENTS
+    push_max_events: int = 20000
     push_embed_interval_seconds: float = 5.0  # how often pushed events get their vectors; override with PUSH_EMBED_INTERVAL_SECONDS
     groq_model: str ="openai/gpt-oss-120b"  # must support tool calling; override with GROQ_MODEL
     # a stable place for the downloaded model (the OS temp dir can be cleaned); override with EMBEDDING_CACHE_DIR

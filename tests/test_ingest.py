@@ -106,11 +106,21 @@ async def test_invalid_project_is_409(session_factory):
     assert res.status_code == 409
 
 
-async def test_too_many_events_is_413(session_factory):
+async def test_more_events_than_the_configured_limit_is_413(session_factory, monkeypatch):
+    settings = Settings(_env_file=None, database_url="postgresql://u@h/db", push_max_events=3)
+    monkeypatch.setattr("app.ingestion.push.get_settings", lambda: settings)
     async with projects_client(session_factory, (push_project(),)) as http:
-        ok = await push(http, [{"message": f"m{i}"} for i in range(1000)])
-        res = await push(http, [{"message": f"m{i}"} for i in range(1001)])
+        ok = await push(http, [{"message": f"m{i}"} for i in range(3)])
+        res = await push(http, [{"message": f"m{i}"} for i in range(4)])
     assert ok.status_code == 200 and res.status_code == 413
+    assert "At most 3 events" in res.json()["error"]["message"]
+
+
+async def test_a_batch_of_fluent_bit_size_is_accepted_by_default(session_factory):
+    events = [{"message": f"event number {i}"} for i in range(5000)]  # far above the old 1000
+    async with projects_client(session_factory, (push_project(),)) as http:
+        res = await push(http, events)
+    assert res.status_code == 200 and res.json()["stored"] == 5000
 
 
 def with_body_limit(monkeypatch, limit: int) -> None:

@@ -13,7 +13,7 @@ from app.controllers.dependencies import get_project
 from app.core.database import get_session
 from app.core.errors import NotFoundError, ProjectInvalidError, StorageUnavailableError
 from app.ingestion.projects import NOT_FOUND, Project
-from app.ingestion.push import MAX_EVENTS, build_push_rows, check_token, parse_body, read_body
+from app.ingestion.push import build_push_rows, check_token, parse_body, read_body
 from app.ingestion.store import insert_new_events
 from app.schemas.ingest import IngestResponse, PushEvent
 
@@ -29,7 +29,7 @@ _EXAMPLE = [
 # The body is read by hand (so its size can be capped while streaming), which hides it from FastAPI: describe it here.
 _BODY_DOCS = {"requestBody": {"required": True, "content": {
     "application/json": {
-        "schema": {"type": "array", "maxItems": MAX_EVENTS, "items": _EVENT_SCHEMA}, "example": _EXAMPLE},
+        "schema": {"type": "array", "items": _EVENT_SCHEMA}, "example": _EXAMPLE},
     "application/x-ndjson": {"schema": _EVENT_SCHEMA, "example": _EXAMPLE[0]},
 }}}
 

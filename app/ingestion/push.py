@@ -28,7 +28,6 @@ from app.ingestion.sources import PushSource
 from app.ingestion.store import EventRow
 from app.schemas.ingest import PushEvent
 
-MAX_EVENTS = 1000
 MAX_MESSAGE_CHARS = 256 * 1024  # the same cap a file event gets (AssemblyLimits.max_chars)
 # The level names the agent ranks (app.agent.tools.common.LEVEL_RANKS); any other level a sender makes up is dropped.
 SENDER_LEVELS = frozenset({"TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "SEVERE", "FATAL", "CRITICAL"})
@@ -69,8 +68,9 @@ def parse_body(raw: bytes, content_type: str) -> list[PushEvent]:
     except UnicodeDecodeError:
         raise InvalidPayloadError("The body must be UTF-8 text.") from None
     items = _json_items(text, ndjson="ndjson" in content_type.lower())
-    if len(items) > MAX_EVENTS:
-        raise PayloadTooLargeError(f"At most {MAX_EVENTS} events per request.")
+    limit = get_settings().push_max_events
+    if len(items) > limit:
+        raise PayloadTooLargeError(f"At most {limit} events per request (PUSH_MAX_EVENTS).")
     try:
         return [PushEvent.model_validate(item) for item in items]
     except ValidationError as exc:  # details name the fields only, never the values
