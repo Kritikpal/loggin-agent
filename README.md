@@ -116,6 +116,25 @@ Fill the fields of events stored earlier (files and pushed events; text, embeddi
 .venv/Scripts/python -m scripts.backfill_fields --project wso2-gateway
 ```
 
+## Counting questions (`count_by`)
+
+The chat agent has a tool that counts events by field with an exact SQL count, so "how many logins on 4 November",
+"which user / application logged in most", "which application has the most failures", "how many different users" and
+"login report per day" no longer rest on a sample of 25 lines. It groups by one or two of `user`, `actor`, `target`,
+`application`, `action`, `result`, `level`, `day`, `hour` (days and hours in the project's timezone), and can filter by
+action, result, application, user and a time window. The `audit_*` dimensions exist for WSO2 audit events (see above);
+`level`, `day` and `hour` work for any log. Counts are over events (one log line), not sessions. A user who signs in with an
+e-mail address appears as `[REDACTED:email:u...]` when `PSEUDONYM_KEY` is set: the same code is the same person, and the
+address itself is never stored. The result also says how many events lacked the field.
+
+Questions it should now answer exactly are in `tests/fixtures/agent-golden-audit.yaml` (10 cases over a synthetic audit log in
+`tests/fixtures/projects/wso2-audit`). To run them (this spends Groq quota): copy that folder to `logs/wso2-audit`, then
+
+```
+.venv/Scripts/python -m scripts.index_logs --project wso2-audit
+.venv/Scripts/python -m scripts.eval_agent --golden tests/fixtures/agent-golden-audit.yaml --project wso2-audit --workers 4
+```
+
 ## Searching logs
 
 `POST /api/v1/projects/{project_id}/search-logs` (read-only; no LLM):
