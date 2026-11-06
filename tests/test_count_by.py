@@ -162,3 +162,144 @@ async def test_level_and_hour_dimensions_work_without_audit_fields(session_facto
 
     assert {"INFO", "WARN"} <= {g.key[0] for g in levels.rows}
     assert all(len(g.key[0]) == 16 and g.key[0].endswith(":00") for g in hours.rows)  # "2026-11-04 10:00"
+
+
+# --- the tool: output format, arguments, errors ---
+
+from app.agent.tools import count_by as count_by_module  # noqa: E402
+from app.agent.tools.count_by import Counts, Group, make_count_by_tool, render_counts  # noqa: E402
+from app.agent.tools.format import MAX_RESULT_CHARS  # noqa: E402
+
+WINDOW = (datetime(2026, 11, 3, tzinfo=UTC), datetime(2026, 11, 5, 23, 59, 59, tzinfo=UTC))
+AT = datetime(2026, 11, 3, 7, 42, tzinfo=UTC)
+LATER = datetime(2026, 11, 5, 6, 45, tzinfo=UTC)
+
+
+def group(key: tuple[str, ...], n: int) -> Group:
+    return Group(key, n, "p/audit", 20, AT, "p/audit", 72, LATER)
+
+
+def rendered(counts: Counts, by=("application",), filters=None, top=15) -> str:
+    return render_counts(counts, by=list(by), filters=filters or {}, window=WINDOW, project_id="p",
+                         coverage="files 1, indexed 1", top=top)
+
+
+def test_header_has_window_filters_by_total_groups_and_columns():
+    counts = Counts(total=5, groups=2, missing=0, rows=(group(("portalApplication",), 4), group(("Console",), 1)))
+
+    header = rendered(counts, filters={"action": "Login", "result": "Failed"}).splitlines()[0]
+
+    for part in ("by application", "filters action=Login result=Failed", "total 5", "groups 2",
+                 "columns: application | count | first | last", "window 2026-11-03T00:00:00Z..2026-11-05T23:59:59Z"):
+        assert part in header
+
+
+def test_rows_are_pipe_separated_with_citations():
+    counts = Counts(total=5, groups=2, missing=0, rows=(group(("portalApplication",), 4), group(("Console",), 1)))
+
+    assert "portalApplication | 4 | L20@11-03T07:42Z | L72@11-05T06:45Z" in rendered(counts).splitlines()
+
+
+def test_missing_events_are_reported_in_the_header():
+    result = rendered(Counts(total=1, groups=1, missing=3, rows=(group(("Console",), 1),)))
+
+    assert "3 events have no application" in result.splitlines()[0]
+
+
+def test_hidden_users_get_the_fixed_note_once():
+    hidden = Counts(total=2, groups=1, missing=0, rows=(group(("[REDACTED:email:u5b4b6d76b6c]",), 2),))
+    plain = Counts(total=2, groups=1, missing=0, rows=(group(("Goutam001",), 2),))
+
+    assert rendered(hidden, by=("user",)).count("address is hidden") == 1
+    assert "address is hidden" not in rendered(plain, by=("user",))
+
+
+def test_more_groups_note():
+    counts = Counts(total=9, groups=7, missing=0, rows=(group(("a",), 5), group(("b",), 4)))
+
+    assert "5 more groups; raise top (max 50) or narrow the window" in rendered(counts, top=2)
+
+
+def test_zero_matches_still_end_with_the_coverage_footer():
+    result = rendered(Counts(total=0, groups=0, missing=0, rows=()))
+
+    assert "total 0" in result and result.splitlines()[-1] == "files 1, indexed 1"
+
+
+def test_a_field_no_event_has():
+    result = rendered(Counts(total=0, groups=0, missing=12, rows=()))
+
+    assert "no events in this window have application" in result and result.splitlines()[-1] == "files 1, indexed 1"
+
+
+def test_many_groups_are_cut_to_the_size_cap():
+    rows = tuple(group((f"2026-11-0{n % 9 + 1} | user-with-a-fairly-long-name-{n}",), 50 - n) for n in range(50))
+
+    result = rendered(Counts(total=2000, groups=80, missing=0, rows=rows), by=("day", "user"), top=50)
+
+    assert len(result) <= MAX_RESULT_CHARS and "left out" in result
+
+
+@pytest.fixture
+def tool_for(session_factory, monkeypatch):
+    monkeypatch.setattr(count_by_module, "SessionLocal", session_factory)
+
+    async def make():
+        project = await indexed(session_factory)
+        return make_count_by_tool(project)
+
+    return make
+
+
+async def test_the_tool_answers_failed_logins_by_application(tool_for):
+    tool = await tool_for()
+
+    result = await tool.ainvoke({"by": ["application"], "action": "Login", "result": "Failed"})
+
+    assert "portalApplication | 4 |" in result and "Console | 1 |" in result and "total 5" in result
+
+
+async def test_an_unknown_dimension_is_refused(tool_for):
+    tool = await tool_for()
+
+    result = await tool.ainvoke({"by": ["password"]})
+
+    assert result.startswith("error:") and "by" in result
+
+
+async def test_three_dimensions_are_refused(tool_for):
+    tool = await tool_for()
+
+    assert (await tool.ainvoke({"by": ["day", "user", "result"]})).startswith("error:")
+
+
+async def test_top_above_the_maximum_is_clipped(tool_for):
+    tool = await tool_for()
+
+    result = await tool.ainvoke({"by": ["day", "user"], "top": 500})
+
+    assert not result.startswith("error:") and len(result.splitlines()) <= 50 + 4
+
+
+async def test_a_project_without_sources_counts_nothing(tool_for, session_factory):
+    from dataclasses import replace
+
+    project = await indexed(session_factory)
+    tool = make_count_by_tool(replace(project, files=(), push_source=None))
+
+    result = await tool.ainvoke({"by": ["application"]})
+
+    assert "total 0" in result
+
+
+async def test_a_database_failure_is_a_clean_error(tool_for, monkeypatch):
+    tool = await tool_for()
+
+    def broken():
+        raise RuntimeError("connection refused to secret-host")
+
+    monkeypatch.setattr(count_by_module, "SessionLocal", broken)
+
+    result = await tool.ainvoke({"by": ["application"]})
+
+    assert result == "error: count_by is temporarily unavailable"

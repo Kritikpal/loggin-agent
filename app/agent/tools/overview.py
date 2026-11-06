@@ -157,8 +157,8 @@ def render(kinds: Sequence, days: Sequence, by_level: dict, shown: Sequence[str]
         many = k.files > 1
         lines.append(" ".join([
             k.sig or "-", str(k.n), (k.level or "-")[:16],
-            _cite(k.first_file, k.first_line, k.first_at, many, with_day, project_id),
-            _cite(k.last_file, k.last_line, k.last_at, many, with_day, project_id), template_text(k.template or "")]))
+            cite(k.first_file, k.first_line, k.first_at, many, with_day, project_id),
+            cite(k.last_file, k.last_line, k.last_at, many, with_day, project_id), template_text(k.template or "")]))
         if days:
             lines.append("  per day: " + ", ".join(per_kind.get(k.sig, [])))
     more = (kinds[0].kinds - len(kinds)) if kinds else 0
@@ -174,7 +174,7 @@ def template_text(template: str) -> str:
     return f"{body[:TEMPLATE_HEAD]}…{body[-TEMPLATE_TAIL:]}"
 
 
-def _cite(file: str, line: int | None, at: datetime | None, with_file: bool, with_day: bool, project_id: str) -> str:
+def cite(file: str, line: int | None, at: datetime | None, with_file: bool, with_day: bool, project_id: str) -> str:
     where = f"{short(file, project_id)}:" if with_file else ""
     when = "-" if at is None else f"{at.astimezone(UTC):%m-%dT%H:%MZ}" if with_day else f"{at.astimezone(UTC):%H:%MZ}"
     return f"{where}L{line if line is not None else '?'}@{when}"
