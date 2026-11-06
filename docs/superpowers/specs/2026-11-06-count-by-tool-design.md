@@ -50,12 +50,13 @@ One header line, then one line per group, largest first (ties by value), through
 
 ```
 window 2026-11-03T00:00:00Z..2026-11-05T23:59:59Z · filters action=Login result=Failed · by application · total 5 ·
-groups 2 · columns: application count first last
-portalApplication 4 L20@11-03T07:42Z L72@11-05T06:45Z
-Console 1 L74@11-05T04:40Z L74@11-05T04:40Z
+groups 2 · columns: application | count | first | last
+portalApplication | 4 | L20@11-03T07:42Z | L72@11-05T06:45Z
+Console | 1 | L74@11-05T04:40Z | L74@11-05T04:40Z
 ```
 
-(Illustrative values.) `total` is the number of matching events, `groups` the number of distinct groups, so
+(Illustrative values; columns are separated by ` | ` because values such as "My Account" contain spaces.) `total` is the
+number of events counted in the groups (matching the filters and having every chosen field), `groups` the number of distinct groups, so
 "how many different users" is the `groups` figure. `first`/`last` cite the earliest and latest event of the group
 (`L<line>@<time>`, as in `overview`) so a count can be cited without another call. When more groups exist than `top`:
 "N more groups; raise top (max 50) or narrow the window". Events that lack the chosen field are reported once in the header
@@ -105,8 +106,9 @@ thousand rows; no new index in this step. If a count is slow on real data, add e
   the tool never reads another project's rows; `by` outside the enum is refused by the schema.
 - Registry tests: `count_by` is in `TOOLS`, `BUDGETS`, and the graph's budget middleware refuses a third call.
 - Agent evaluation (spends Groq quota, run by the user or with their go-ahead): the audit golden set before and after (baseline
-  5/10 real) and the original 17-case set, to confirm no regression from the new tool and prompt 4.2. Tighten case a4's check
-  first (it must name the winner correctly: the scorer accepted a wrong answer).
+  5/10 real) and the original 17-case set, to confirm no regression from the new tool and prompt 4.2. First fix the scorer:
+  its "a bare number must stand alone" rule counted the 10 in a time such as `10:10:00Z`, which is why a wrong a4 answer
+  scored as a pass (`scripts/eval_scoring.py` `_cited`); a number followed by `:digit` or `.digit` is not a standalone number.
 
 ## Risks and decisions to confirm
 
