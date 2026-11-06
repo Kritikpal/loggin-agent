@@ -73,5 +73,6 @@ def _spaced(text: str) -> str:
 
 
 def _cited(line: int, answer: str) -> bool:
-    # not after a digit, '.', ':' or ',' so "15:44:08.158" (milliseconds) and "1580" do not count
-    return re.search(rf"(?<![\d.:,]){line}(?!\d)", answer) is not None
+    # not after a digit, '.', ':' or ',' so "15:44:08.158" (milliseconds) and "1580" do not count, and not before
+    # ":<digit>" or ".<digit>" so the 10 of "10:10:00Z" or "10.5" is no number 10 (a wrong answer passed on that)
+    return re.search(rf"(?<![\d.:,]){line}(?!\d|[:.]\d)", answer) is not None

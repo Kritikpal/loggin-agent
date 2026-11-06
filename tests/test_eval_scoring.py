@@ -120,3 +120,30 @@ def test_a_hyphen_and_a_space_are_the_same_in_a_fact():
     assert score(case, "The circuit\u2011breaker was open.", [])["answer_has"]
     assert score(case, "The circuit-breaker was open.", [])["answer_has"]
     assert not score(case, "The breaker was open.", [])["answer_has"]
+
+
+def test_a_time_is_not_a_standalone_number():
+    from scripts.eval_scoring import _cited
+
+    assert not _cited(10, "last at 10:10:00Z")
+    assert not _cited(10, "10.5 s")
+    assert _cited(10, "10 logins")
+    assert _cited(10, "10.")
+    assert _cited(10, "(L10: done)")
+
+
+def test_the_wrong_a4_answer_no_longer_passes():
+    import json
+    from pathlib import Path
+
+    import pytest
+    import yaml
+
+    baseline = Path("docs/eval-runs/agent-golden-audit-v1-baseline.json")
+    if not baseline.exists():
+        pytest.skip("the baseline run is not in this checkout")
+    answer = next(r for r in json.loads(baseline.read_text(encoding="utf-8")) if r["id"].startswith("a4-"))["answer"]
+    cases = yaml.safe_load(Path("tests/fixtures/agent-golden-audit.yaml").read_text(encoding="utf-8"))["cases"]
+    case = next(c for c in cases if c["id"] == "a4-most-accessed-application")
+
+    assert score(case, answer, [])["answer_has"] is False  # it said Console 5; the truth is My Account 10
