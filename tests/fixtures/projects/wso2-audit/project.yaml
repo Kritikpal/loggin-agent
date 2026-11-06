@@ -1,0 +1,5 @@
+title: WSO2 Audit (golden set)
+description: Synthetic WSO2 Identity Server audit events for 3-5 November 2026, for the audit golden set.
+type: wso2
+timezone: Asia/Kolkata
+include: "wso2carbon-*.log"

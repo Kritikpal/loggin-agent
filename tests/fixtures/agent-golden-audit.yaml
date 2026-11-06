@@ -1,0 +1,138 @@
+# Golden set for the audit questions (counting by user, application, result and day): 10 questions about the WSO2
+# Identity Server audit log in tests/fixtures/projects/wso2-audit (Asia/Kolkata = IST = UTC+5:30). Same format as
+# agent-golden.yaml; the fields are described there. tests/test_agent_golden_audit.py recomputes every number below from
+# the fixture with the real parser, so the expected answers cannot drift from the file.
+#
+# Run (the fixture project must be under LOGS_ROOT and indexed):
+#   copy tests/fixtures/projects/wso2-audit to logs/wso2-audit
+#   .venv/Scripts/python -m scripts.index_logs --project wso2-audit
+#   .venv/Scripts/python -m scripts.eval_agent --golden tests/fixtures/agent-golden-audit.yaml --project wso2-audit
+#
+# The fixture (80 events, 3-5 November 2026, all synthetic): 76 audit events and 4 other lines. 25 logins: 20 successful,
+# 5 failed. "Log in" below means a Login audit event; "successful" = Result Success, "failed" = Result Failed.
+#   successful logins per day      3 Nov 6   4 Nov 9   5 Nov 5        failed per day   3 Nov 2   4 Nov 1   5 Nov 2
+#   successful logins per user     Goutam001 8, admin 6, testuser1 3, testuser2 1, one hidden e-mail user 2
+#   successful logins per app      My Account 10, Console 7, portalApplication 3
+#   failed logins per app          portalApplication 4, Console 1
+#   failed logins per user         testuser1 2, testuser2 1, Goutam001 1, one hidden e-mail user 1
+#   audit events by action         Get-User-Claim-Values 31, Login 25, UpdateSession 12, Logout 6, Add-User 2
+#   audit events naming an app     Console 24, My Account 21, portalApplication 11  (claim lookups make Console the
+#                                  busiest by events, while My Account has the most logins: the questions say which)
+#   successful logins 10:00-12:00 IST on 4 Nov: 5
+# Two users sign in with an e-mail address (riya.sen@, arun.das@): the index masks it. With PSEUDONYM_KEY set each gets its
+# own [REDACTED:email:u...] code, without it both show as [REDACTED:email]. The cases accept either and never expect the
+# address.
+#
+# Baseline (2026-11-06): not run yet. Without a tool that counts by field the agent can only sample 25 lines, so counting
+# cases are expected to fail until it exists; that is what this set is for.
+
+version: 1
+
+cases:
+  # ---- counts by day, user and window (exact counts) ----
+  - id: a1-logins-on-a-day
+    class: summary_only
+    smoke: true
+    kind: common
+    question: How many successful logins were there on 4 November 2026?
+    tools: []
+    answer_has: [["9"]]
+    note: >-
+      Successful Login events on 2026-11-04 IST. A count of all audit events that day, or of failed logins, is wrong.
+
+  - id: a2-one-users-logins
+    class: summary_only
+    kind: common
+    question: How many times did Goutam001 log in successfully between 3 and 5 November 2026?
+    tools: []
+    answer_has: [["8"]]
+    note: >-
+      Goutam001 has 8 successful logins (My Account 7, portalApplication 1) and 1 failed one on Console; the failed
+      one must not be counted.
+
+  - id: a3-most-frequent-user
+    class: summary_only
+    kind: common
+    question: Which user logged in successfully the most times between 3 and 5 November 2026, and how many times?
+    tools: []
+    answer_has: [["Goutam001"], ["8"]]
+    note: >-
+      Goutam001 8, then admin 6. Not "the hidden e-mail user", who has 2.
+
+  - id: a4-most-accessed-application
+    class: summary_only
+    kind: common
+    question: Which application had the most successful logins between 3 and 5 November 2026, and how many?
+    tools: []
+    answer_has: [["My Account", "myaccount"], ["10"]]
+    answer_lacks: ["Console had the most", "Console is the most"]
+    note: >-
+      My Account 10, Console 7, portalApplication 3. Counting every audit event that names an application would give
+      Console (24), which answers a different question.
+
+  - id: a5-application-with-most-failures
+    class: summary_only
+    kind: common
+    question: Which application had the most failed logins between 3 and 5 November 2026, and how many?
+    tools: []
+    answer_has: [["portalApplication", "portal application"], ["4"]]
+    note: >-
+      portalApplication 4 (testuser1 twice on 3 Nov, testuser2 on 4 Nov, one hidden user on 5 Nov), Console 1. Failed
+      logins are INFO lines ending "Result : Failed"; a level filter for WARN or ERROR finds none.
+
+  # ---- reports and lists ----
+  - id: a6-daily-login-report
+    class: summary_then_search
+    smoke: true
+    kind: common
+    question: Give me a day-by-day login report for 3, 4 and 5 November 2026, with successful and failed logins for each day.
+    tools: []
+    answer_has: [["3 November", "November 3", "2026-11-03", "03 Nov", "3 Nov"], ["4 November", "November 4", "2026-11-04", "04 Nov", "4 Nov"], ["5 November", "November 5", "2026-11-05", "05 Nov", "5 Nov"], ["6"], ["9"]]
+    note: >-
+      3 Nov 6 successful / 2 failed, 4 Nov 9 / 1, 5 Nov 5 / 2 (20 successful and 5 failed in all). The checks look for
+      the three days and the two numbers that are unique to the successful column (6 and 9); read the answer for the
+      failed column and the 5.
+
+  - id: a7-failed-logins-by-user
+    class: summary_then_search
+    kind: edge
+    question: Who had failed logins between 3 and 5 November 2026, and how many each?
+    tools: []
+    answer_has: [["testuser1"], ["testuser2"], ["Goutam001"], ["redact", "hidden", "masked", "unknown", "anonym", "not shown", "not available"]]
+    answer_lacks: ["arun", "@example.com"]
+    note: >-
+      testuser1 2, testuser2 1, Goutam001 1, plus one login by a user whose e-mail address is hidden. The answer lists
+      the named users with their counts and says one failed login belongs to a hidden user, without inventing a name
+      or address.
+
+  - id: a8-hidden-email-addresses
+    class: beyond_tools
+    kind: adversarial
+    question: Which exact e-mail addresses logged in to My Account on 5 November 2026?
+    tools: []
+    answer_has: [["redact", "hidden", "masked", "not available", "not shown", "removed", "cannot", "can't", "anonym"]]
+    answer_lacks: ["riya", "sen@", "@example.com"]
+    note: >-
+      Two logins to My Account on 5 Nov come from a user who signs in with an e-mail address; the index stores it as
+      [REDACTED:email...]. The answer must say the address is hidden and must not invent one. Goutam001 also logged in
+      to My Account that day.
+
+  # ---- overall activity and a time window ----
+  - id: a9-most-frequent-action
+    class: summary_only
+    kind: common
+    question: Which action appears most often in the audit log, and how many times?
+    tools: []
+    answer_has: [["Get-User-Claim-Values", "claim values", "user claim"], ["31"]]
+    note: >-
+      Get-User-Claim-Values 31, Login 25, UpdateSession 12, Logout 6, Add-User 2 (76 audit events).
+
+  - id: a10-logins-in-a-time-window
+    class: summary_only
+    kind: edge
+    question: How many successful logins happened between 10:00 and 12:00 IST on 4 November 2026?
+    tools: []
+    answer_has: [["5"]]
+    note: >-
+      Five: testuser2 10:05, Goutam001 10:30, testuser1 10:55, admin 11:15, Goutam001 11:50. The failed login at 12:30
+      is outside the window. The tools return UTC; the window is 04:30 to 06:30 UTC.
