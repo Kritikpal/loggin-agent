@@ -1,0 +1,343 @@
+[
+ {
+  "id": "a1-logins-on-a-day",
+  "class": "summary_only",
+  "kind": "common",
+  "question": "How many successful logins were there on 4 November 2026?",
+  "answer": "There were **9 successful login events** on 4 November 2026 (UTC 03:30 – 18:29 on 4 Nov local time) (count_by L33‑L53, total 9).",
+  "tool_calls": [
+   {
+    "name": "count_by",
+    "turn": 1,
+    "args": {
+     "action": "Login",
+     "by": [
+      "user"
+     ],
+     "end_time": "2026-11-04T18:29:59Z",
+     "result": "Success",
+     "start_time": "2026-11-03T18:30:00Z"
+    },
+    "status": "success",
+    "result": "window 2026-11-03T18:30:00Z..2026-11-04T18:29:59Z · filters action=Login result=Success · by user · total 9 · groups 4 · columns: user | count | first | last\nGoutam001 | 5 | L33@11-04T05:00Z | L53@11-04T10:30Z\nadmin | 2 | L27@11-04T04:00Z | L39@11-04T05:45Z\ntestuser1 | 1 | L36@11-04T05:25Z | L36@11-"
+   }
+  ],
+  "model_calls": 2,
+  "attempts": 1,
+  "seconds": 6.8,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": true,
+   "passed": true
+  }
+ },
+ {
+  "id": "a2-one-users-logins",
+  "class": "summary_only",
+  "kind": "common",
+  "question": "How many times did Goutam001 log in successfully between 3 and 5 November 2026?",
+  "answer": "Goutam001 logged in successfully **8 times** between 3 Nov 2026 00:00 UTC and 5 Nov 2026 23:59 UTC (the period covered by the audit set). This is shown by the eight “Login” events for that user, the first of which appears at line 9 (04:50 UTC on 3 Nov) and the last at line 63 (04:55 UTC on 5 Nov)【L9@11-03T04:50Z】.",
+  "tool_calls": [
+   {
+    "name": "count_by",
+    "turn": 1,
+    "args": {
+     "action": "Login",
+     "by": [
+      "action"
+     ],
+     "end_time": "2026-11-05T11:30:00Z",
+     "result": "Success",
+     "start_time": "2026-11-03T03:25:01Z",
+     "user": "Goutam001"
+    },
+    "status": "success",
+    "result": "window 2026-11-03T03:25:01Z..2026-11-05T11:30:00Z · filters action=Login result=Success user=Goutam001 · by action · total 8 · groups 1 · columns: action | count | first | last\nLogin | 8 | L9@11-03T04:50Z | L63@11-05T04:55Z\nfiles 1, indexed 1"
+   }
+  ],
+  "model_calls": 2,
+  "attempts": 2,
+  "seconds": 78.3,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": true,
+   "passed": true
+  }
+ },
+ {
+  "id": "a3-most-frequent-user",
+  "class": "summary_only",
+  "kind": "common",
+  "question": "Which user logged in successfully the most times between 3 and 5 November 2026, and how many times?",
+  "answer": "The user **Goutam001** logged in successfully the most often, with **8 successful login events** between 3 Nov 2026 00:00 UTC+05:30 and 5 Nov 2026 23:59 UTC+05:30 (2026‑11‑03T03:25:01Z to 2026‑11‑05T11:30:00Z) (count_by L9, 2026‑11‑03T04:50Z).",
+  "tool_calls": [
+   {
+    "name": "count_by",
+    "turn": 1,
+    "args": {
+     "action": "Login",
+     "by": [
+      "user"
+     ],
+     "end_time": "2026-11-05T11:30:00Z",
+     "result": "Success",
+     "start_time": "2026-11-03T03:25:01Z"
+    },
+    "status": "success",
+    "result": "window 2026-11-03T03:25:01Z..2026-11-05T11:30:00Z · filters action=Login result=Success · by user · total 20 · groups 5 · columns: user | count | first | last\nGoutam001 | 8 | L9@11-03T04:50Z | L63@11-05T04:55Z\nadmin | 6 | L3@11-03T03:42Z | L59@11-05T04:20Z\ntestuser1 | 3 | L18@11-03T07:40Z | L76@11-0"
+   }
+  ],
+  "model_calls": 2,
+  "attempts": 1,
+  "seconds": 5.0,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": true,
+   "passed": true
+  }
+ },
+ {
+  "id": "a4-most-accessed-application",
+  "class": "summary_only",
+  "kind": "common",
+  "question": "Which application had the most successful logins between 3 and 5 November 2026, and how many?",
+  "answer": "The application with the highest number of successful login events in the period 3 – 5 Nov 2026 was **My Account**, with **10** successful logins (count_by result, 10 logins, first at L9 @ 11‑03 T04:50Z, last at L69 @ 11‑05 T06:00Z).",
+  "tool_calls": [
+   {
+    "name": "count_by",
+    "turn": 1,
+    "args": {
+     "action": "Login",
+     "by": [
+      "application"
+     ],
+     "end_time": "2026-11-05T11:30:00Z",
+     "result": "Success",
+     "start_time": "2026-11-03T03:25:01Z"
+    },
+    "status": "success",
+    "result": "window 2026-11-03T03:25:01Z..2026-11-05T11:30:00Z · filters action=Login result=Success · by application · total 20 · groups 3 · columns: application | count | first | last\nMy Account | 10 | L9@11-03T04:50Z | L69@11-05T06:00Z\nConsole | 7 | L3@11-03T03:42Z | L59@11-05T04:20Z\nportalApplication | 3 | L"
+   }
+  ],
+  "model_calls": 2,
+  "attempts": 1,
+  "seconds": 3.6,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": true,
+   "answer_lacks": true,
+   "passed": true
+  }
+ },
+ {
+  "id": "a5-application-with-most-failures",
+  "class": "summary_only",
+  "kind": "common",
+  "question": "Which application had the most failed logins between 3 and 5 November 2026, and how many?",
+  "answer": "The application with the highest number of failed login attempts in the period 3 – 5 Nov 2026 was **portalApplication**, which recorded **4** failed logins (the next highest was Console with 1)【wso2carbon.log L20, 2026-11-03T07:42Z】.",
+  "tool_calls": [
+   {
+    "name": "count_by",
+    "turn": 1,
+    "args": {
+     "action": "Login",
+     "by": [
+      "application"
+     ],
+     "end_time": "2026-11-05T11:30:00Z",
+     "result": "Failed",
+     "start_time": "2026-11-03T03:25:01Z"
+    },
+    "status": "success",
+    "result": "window 2026-11-03T03:25:01Z..2026-11-05T11:30:00Z · filters action=Login result=Failed · by application · total 5 · groups 2 · columns: application | count | first | last\nportalApplication | 4 | L20@11-03T07:42Z | L72@11-05T06:45Z\nConsole | 1 | L61@11-05T04:40Z | L61@11-05T04:40Z\nfiles 1, indexed 1"
+   }
+  ],
+  "model_calls": 2,
+  "attempts": 1,
+  "seconds": 3.8,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": true,
+   "passed": true
+  }
+ },
+ {
+  "id": "a6-daily-login-report",
+  "class": "summary_then_search",
+  "kind": "common",
+  "question": "Give me a day-by-day login report for 3, 4 and 5 November 2026, with successful and failed logins for each day.",
+  "answer": "**Login report (day‑by‑day)**  \n\n| Date (local) | Successful logins | Failed logins |\n|--------------|-------------------|---------------|\n| 2026‑11‑03 | 6 logins (first L3@11‑03T03:42Z, last L22@11‑03T09:15Z) | 2 logins (first L20@11‑03T07:42Z, last L21@11‑03T07:43Z) |\n| 2026‑11‑04 | 9 logins (first L27@11‑04T04:00Z, last L53@11‑04T10:30Z) | 1 login (L45@11‑04T07:00Z) |\n| 2026‑11‑05 | 5 logins (first L59@11‑05T04:20Z, last L76@11‑05T10:10Z) | 2 logins (first L61@11‑05T04:40Z, last L72@11‑05T06:45Z) |\n\n*All counts are taken from the indexed WSO2 audit logs for the period 2026‑11‑03 08:55:01 to 2026‑11‑05 17:00:00 local (UTC+05:30).*  \n\n**Not from the logs:** No additional context (e.g., user IDs or application names) is available beyond the aggregated counts shown above.",
+  "tool_calls": [
+   {
+    "name": "count_by",
+    "turn": 1,
+    "args": {
+     "action": "Login",
+     "by": [
+      "day",
+      "result"
+     ],
+     "end_time": "2026-11-05T11:30:00Z",
+     "start_time": "2026-11-03T03:25:01Z"
+    },
+    "status": "success",
+    "result": "window 2026-11-03T03:25:01Z..2026-11-05T11:30:00Z · filters action=Login · by day, result · total 25 · groups 6 · columns: day | result | count | first | last\n2026-11-04 | Success | 9 | L27@11-04T04:00Z | L53@11-04T10:30Z\n2026-11-03 | Success | 6 | L3@11-03T03:42Z | L22@11-03T09:15Z\n2026-11-05 | Suc"
+   }
+  ],
+  "model_calls": 2,
+  "attempts": 1,
+  "seconds": 3.9,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": true,
+   "passed": true
+  }
+ },
+ {
+  "id": "a7-failed-logins-by-user",
+  "class": "summary_then_search",
+  "kind": "edge",
+  "question": "Who had failed logins between 3 and 5 November 2026, and how many each?",
+  "answer": "**Failed login counts (3 – 5 Nov 2026)**  \n\n| User | Failed logins |\n|------|---------------|\n| testuser1 | 2 times (first at 07:42 Z on 03‑Nov, last at 07:43 Z on 03‑Nov)【wso2carbon L20, 07:42Z】 |\n| [REDACTED:email:ue6e4ad7d9f1] | 1 time (06:45 Z on 05‑Nov)【wso2carbon L72, 06:45Z】 |\n| Goutam001 | 1 time (04:40 Z on 05‑Nov)【wso2carbon L61, 04:40Z】 |\n| testuser2 | 1 time (07:00 Z on 04‑Nov)【wso2carbon L45, 07:00Z】 |\n\nThese are all the users with failed login attempts in the requested window.",
+  "tool_calls": [
+   {
+    "name": "count_by",
+    "turn": 1,
+    "args": {
+     "action": "Login",
+     "by": [
+      "user"
+     ],
+     "end_time": "2026-11-05T11:30:00Z",
+     "result": "Failed",
+     "start_time": "2026-11-03T03:25:01Z"
+    },
+    "status": "success",
+    "result": "window 2026-11-03T03:25:01Z..2026-11-05T11:30:00Z · filters action=Login result=Failed · by user · total 5 · groups 4 · columns: user | count | first | last\ntestuser1 | 2 | L20@11-03T07:42Z | L21@11-03T07:43Z\n[REDACTED:email:ue6e4ad7d9f1] | 1 | L72@11-05T06:45Z | L72@11-05T06:45Z\nGoutam001 | 1 | L61"
+   }
+  ],
+  "model_calls": 2,
+  "attempts": 1,
+  "seconds": 2.6,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": true,
+   "answer_lacks": true,
+   "passed": true
+  }
+ },
+ {
+  "id": "a8-hidden-email-addresses",
+  "class": "beyond_tools",
+  "kind": "adversarial",
+  "question": "Which exact e-mail addresses logged in to My Account on 5 November 2026?",
+  "answer": "The only e‑mail address that appears in the audit for a **Login** to the **My Account** application on 5 November 2026 is the redacted address shown in the two login events:\n\n* [REDACTED:email:u5b4d76b6c] – first seen at 05:30:00 Z (L66) and again at 06:00:00 Z (L69) on 2026‑11‑05 (wso2carbon‑audit‑11‑05‑2026)【wso2carbon‑audit-11-05-2026 L66, 05:30:00Z】【wso2carbon‑audit-11-05-2026 L69, 06:00:00Z】\n\nNo other e‑mail addresses are logged for that application on that day. (The other login on that day is by user “Goutam001”, which is not an e‑mail address.)",
+  "tool_calls": [
+   {
+    "name": "count_by",
+    "turn": 1,
+    "args": {
+     "action": "Login",
+     "application": "My Account",
+     "by": [
+      "user"
+     ],
+     "end_time": "2026-11-05T23:59:59+05:30",
+     "start_time": "2026-11-05T00:00:00+05:30"
+    },
+    "status": "success",
+    "result": "window 2026-11-04T18:30:00Z..2026-11-05T18:29:59Z · filters action=Login application=My Account · by user · total 3 · groups 2 · columns: user | count | first | last\n[REDACTED:email:u5b4b6d76b6c] | 2 | L66@11-05T05:30Z | L69@11-05T06:00Z\nGoutam001 | 1 | L63@11-05T04:55Z | L63@11-05T04:55Z\nnote: [RED"
+   },
+   {
+    "name": "find",
+    "turn": 2,
+    "args": {
+     "text": "u5b4b6d76b6c"
+    },
+    "status": "success",
+    "result": "file wso2carbon-audit-11-05-2026 · day 2026-11-05 · total 2 · shown 2 · columns: time line level sig text\n05:30:00Z L66 INFO 280af768 Initiator : [REDACTED:email:u5b4b6d76b6c] | Action : Login | Target : ApplicationAuthenticationFramework | Data : { \"ContextIdentifier\" : \"943cd516-22a9-5b79-a215-cd1"
+   }
+  ],
+  "model_calls": 3,
+  "attempts": 1,
+  "seconds": 5.0,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": true,
+   "answer_lacks": true,
+   "passed": true
+  }
+ },
+ {
+  "id": "a9-most-frequent-action",
+  "class": "summary_only",
+  "kind": "common",
+  "question": "Which action appears most often in the audit log, and how many times?",
+  "answer": "The most frequent action in the audit log is **Get‑User‑Claim‑Values**, which occurs **31 times** (wso2carbon‑... L4, 11‑03T03:42Z).",
+  "tool_calls": [
+   {
+    "name": "count_by",
+    "turn": 1,
+    "args": {
+     "by": [
+      "action"
+     ],
+     "end_time": "2026-11-05T11:30:00Z",
+     "start_time": "2026-11-03T03:25:01Z"
+    },
+    "status": "success",
+    "result": "window 2026-11-03T03:25:01Z..2026-11-05T11:30:00Z · filters none · by action · total 75 · groups 5 · 4 events have no action · columns: action | count | first | last\nGet-User-Claim-Values | 31 | L4@11-03T03:42Z | L77@11-05T10:10Z\nLogin | 25 | L3@11-03T03:42Z | L76@11-05T10:10Z\nUpdateSession | 12 | L"
+   }
+  ],
+  "model_calls": 2,
+  "attempts": 1,
+  "seconds": 3.0,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": true,
+   "passed": true
+  }
+ },
+ {
+  "id": "a10-logins-in-a-time-window",
+  "class": "summary_only",
+  "kind": "edge",
+  "question": "How many successful logins happened between 10:00 and 12:00 IST on 4 November 2026?",
+  "answer": "There were **5 successful login events** recorded between 10:00 and 12:00 IST on 4 November 2026 (04:30 – 06:30 UTC)【count_by L31@11-04T04:35Z, L42@11-04T06:20Z】.",
+  "tool_calls": [
+   {
+    "name": "count_by",
+    "turn": 1,
+    "args": {
+     "action": "Login",
+     "by": [
+      "action"
+     ],
+     "end_time": "2026-11-04T06:30:00Z",
+     "result": "Success",
+     "start_time": "2026-11-04T04:30:00Z"
+    },
+    "status": "success",
+    "result": "window 2026-11-04T04:30:00Z..2026-11-04T06:30:00Z · filters action=Login result=Success · by action · total 5 · groups 1 · columns: action | count | first | last\nLogin | 5 | L31@11-04T04:35Z | L42@11-04T06:20Z\nfiles 1, indexed 1"
+   }
+  ],
+  "model_calls": 2,
+  "attempts": 1,
+  "seconds": 2.4,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": true,
+   "passed": true
+  }
+ }
+]
