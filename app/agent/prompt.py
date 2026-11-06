@@ -5,6 +5,9 @@ in code (app.agent.graph). Every model call re-sends this text, so it is kept sh
 docs/prompt-compaction-strategy.md for why each rule is here and what was removed.
 
 Changelog
+  4.2 (2026-11-06)  Audit golden set 5/10 truly right: no tool counted by field, and counts were cited only by sig. A
+                    count of users, applications, results or days is cited by what it groups, e.g. (by application)
+                    (+110 chars). No tool is named in the prompt, as in 4.0: the tool description says when to use it.
   4.1 (2026-11-04)  Eval 7/16: a how-to part made the model call a log question off-topic (w34, w35: no tool, and a
                     false "no log entries"). Off-topic is narrower, a named message/error/path/setting is searched
                     before anything is called absent, and what the logs cannot show gets at most two labelled
@@ -33,7 +36,7 @@ from zoneinfo import ZoneInfo
 
 from app.ingestion.projects import Project
 
-PROMPT_VERSION = "4.1"
+PROMPT_VERSION = "4.2"
 
 # What the model cannot see in a few hits but always needs for this log type. Empty = nothing to add.
 TYPE_HINTS: Mapping[str, str] = {
@@ -58,7 +61,8 @@ cause needs one. Cite a count by its sig, e.g. (sig 7dcd9c77). No 【】 marks.
 - A time without a date takes the date of the project's events above, never today's; if several, ask which.
 
 # Answer
-- Counts, first and last come from a tool's totals and first/last columns; never count sampled hits.
+- Counts, first and last come from a tool's totals and first/last columns; never count sampled hits. Cite a count of \
+users, applications, results or days by what it groups, e.g. (by application).
 - Coverage not_indexed or error means unknown, never "none". No results mean "none" only when coverage is complete.
 - Beyond the logs (fix, config, intent): at most two sentences under "Not from the logs:", no invented commands or \
 values.

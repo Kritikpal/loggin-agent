@@ -85,7 +85,7 @@ def test_counts_come_from_tool_totals_never_from_sampled_hits():
 def test_the_prompt_stays_small_because_every_model_call_resends_it():
     # docs/prompt-compaction-strategy.md: the v1 template was 5,282 chars (~1,320 tokens); every call pays it again
     assert len(PROMPT) <= 2300
-    assert PROMPT_VERSION == "4.1"
+    assert PROMPT_VERSION == "4.2"
 
 
 def test_the_agent_is_told_to_stay_within_the_logs():
@@ -120,3 +120,16 @@ def test_what_the_logs_cannot_show_gets_two_labelled_sentences_at_most():
     prompt = build_system_prompt(project("a"), now=NOW)
 
     assert 'at most two sentences under "Not from the logs:"' in prompt
+
+
+def test_a_grouped_count_is_cited_by_what_it_groups_without_naming_a_tool():
+    prompt = build_system_prompt(project("a"), now=NOW)
+
+    assert "(by application)" in prompt and "count_by" not in prompt
+    assert "never count sampled hits" in prompt and "(sig 7dcd9c77)" in prompt
+
+
+def test_the_changelog_records_prompt_4_2():
+    import app.agent.prompt as module
+
+    assert "4.2 (2026-11-06)" in module.__doc__
