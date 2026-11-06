@@ -17,7 +17,7 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 
 # app.agent.tools.TOOLS; copied, since importing the agent creates the database engine (needs DATABASE_URL)
-BUDGETS = {"overview": 1, "find": 2, "search_logs": 2}
+BUDGETS = {"overview": 1, "find": 2, "search_logs": 2, "count_by": 2}
 # Models write "dev‑auth‑service" with non-breaking hyphens and "15:44 IST" with narrow spaces; compare plain text.
 _PLAIN = str.maketrans({**dict.fromkeys(map(ord, "‐‑‒–—−"), "-"),
                         **dict.fromkeys(map(ord, "   "), " ")})

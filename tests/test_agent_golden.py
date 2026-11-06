@@ -38,7 +38,8 @@ def test_ids_are_unique_and_every_class_is_covered():
 
 
 def test_every_tool_is_required_by_some_case():
-    required = {tool for case in CASES for tool in case["tools"]}
+    audit = yaml.safe_load((FIXTURES / "agent-golden-audit.yaml").read_text(encoding="utf-8"))["cases"]
+    required = {tool for case in [*CASES, *audit] for tool in case["tools"]}  # across both golden files
 
     assert required == TOOLS
 

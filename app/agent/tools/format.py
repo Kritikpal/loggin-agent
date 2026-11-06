@@ -207,6 +207,22 @@ def digest_search(result: str) -> str | None:
     return _digest_rows(result, cut)
 
 
+COUNT_DIGEST_ROWS = 10
+
+
+def digest_count(result: str) -> str | None:
+    """A count_by result seen again: the header, the largest rows, the notes and the coverage line. None when there is
+    nothing to shorten: an error, a short result, or one that is already a digest."""
+    lines = (result or "").splitlines()
+    if len(lines) <= COUNT_DIGEST_ROWS + 2 or lines[0].startswith((DIGEST_MARK, "error:")) or "columns: " not in lines[0]:
+        return None
+    body = lines[1:-1]
+    rows = [line for line in body if not line.startswith("note:")]
+    notes = [line for line in body if line.startswith("note:")]
+    digest = "\n".join([DIGEST_MARK, lines[0], *rows[:COUNT_DIGEST_ROWS], *notes, lines[-1]])
+    return digest if len(digest) < len(result) else None
+
+
 def _digest_rows(result: str, cut) -> str | None:
     """None when there is nothing to shorten: an error, an unknown format, or one that is already a digest."""
     lines = (result or "").splitlines()

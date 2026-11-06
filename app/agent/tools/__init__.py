@@ -8,9 +8,11 @@ from dataclasses import dataclass
 
 from langchain_core.tools import BaseTool
 
+from app.agent.tools.count_by import BUDGET as COUNT_BUDGET
+from app.agent.tools.count_by import make_count_by_tool
 from app.agent.tools.find import BUDGET as FIND_BUDGET
 from app.agent.tools.find import make_find_tool
-from app.agent.tools.format import Digest, digest_find, digest_overview, digest_search
+from app.agent.tools.format import Digest, digest_count, digest_find, digest_overview, digest_search
 from app.agent.tools.overview import BUDGET as OVERVIEW_BUDGET
 from app.agent.tools.overview import make_overview_tool
 from app.agent.tools.search_logs import BUDGET as SEARCH_BUDGET
@@ -32,5 +34,6 @@ TOOLS = (
     ToolSpec("overview", make_overview_tool, OVERVIEW_BUDGET, digest_overview),
     ToolSpec("find", make_find_tool, FIND_BUDGET, digest_find),
     ToolSpec("search_logs", make_search_logs_tool, SEARCH_BUDGET, digest_search),
+    ToolSpec("count_by", make_count_by_tool, COUNT_BUDGET, digest_count),
 )
 BUDGETS = {spec.name: spec.budget for spec in TOOLS}

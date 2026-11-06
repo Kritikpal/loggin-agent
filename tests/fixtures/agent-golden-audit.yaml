@@ -74,7 +74,7 @@ cases:
     class: summary_only
     kind: common
     question: Which application had the most failed logins between 3 and 5 November 2026, and how many?
-    tools: []
+    tools: [count_by]
     answer_has: [["portalApplication", "portal application"], ["4"]]
     note: >-
       portalApplication 4 (testuser1 twice on 3 Nov, testuser2 on 4 Nov, one hidden user on 5 Nov), Console 1. Failed
@@ -86,7 +86,7 @@ cases:
     smoke: true
     kind: common
     question: Give me a day-by-day login report for 3, 4 and 5 November 2026, with successful and failed logins for each day.
-    tools: []
+    tools: [count_by]
     answer_has: [["3 November", "November 3", "2026-11-03", "03 Nov", "3 Nov"], ["4 November", "November 4", "2026-11-04", "04 Nov", "4 Nov"], ["5 November", "November 5", "2026-11-05", "05 Nov", "5 Nov"], ["6"], ["9"]]
     note: >-
       3 Nov 6 successful / 2 failed, 4 Nov 9 / 1, 5 Nov 5 / 2 (20 successful and 5 failed in all). The checks look for
@@ -97,7 +97,7 @@ cases:
     class: summary_then_search
     kind: edge
     question: Who had failed logins between 3 and 5 November 2026, and how many each?
-    tools: []
+    tools: [count_by]
     answer_has: [["testuser1"], ["testuser2"], ["Goutam001"], ["redact", "hidden", "masked", "unknown", "anonym", "not shown", "not available"]]
     answer_lacks: ["arun", "@example.com"]
     note: >-
