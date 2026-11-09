@@ -1,0 +1,14 @@
+.git
+.venv
+.env
+.cache
+.pytest_cache
+.coverage
+__pycache__
+*.egg-info
+logs
+generated-images
+docs
+tests
+frontend/node_modules
+frontend/dist
