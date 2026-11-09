@@ -1,9 +1,8 @@
 """The investigation agent: one model and the read-only tools of app.agent.tools (overview, find, search_logs),
 looped by LangGraph's agent runtime.
 
-Each tool's budget, and the total, is enforced here in code (app.agent.middleware.budget): a call past its budget is not run, the
-model is told so and must answer with what it has. The prompt asks for the same limits, but only this makes them
-certain.
+The budget middleware (app.agent.middleware.budget) is currently detached, so only the prompt asks for the
+per-tool limits; nothing enforces them in code.
 """
 
 import logging
@@ -17,7 +16,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AnyMessage, ToolMessage
 from langchain_core.tools import BaseTool
 
-from app.agent.middleware.budget import REFUSED, ToolBudget
+from app.agent.middleware.budget import REFUSED
 from app.agent.middleware.leaks import StripLeakedToolCalls
 from app.agent.prompt import Spans, build_system_prompt
 from app.agent.tools import BUDGETS, MAX_TOOL_CALLS, TOOLS
@@ -43,7 +42,7 @@ def build_agent(
         tools,
         system_prompt=build_system_prompt(project, spans),
         middleware=[
-            ToolBudget(BUDGETS, MAX_TOOL_CALLS),
+            # ToolBudget(BUDGETS, MAX_TOOL_CALLS) is detached for now; re-add here to enforce the per-question limits
             ContextEditingMiddleware(edits=[DigestSeenResults({s.name: s.digest for s in TOOLS})]),  # ADR-003
             StripLeakedToolCalls(),  # gpt-oss sometimes writes tool-call markup into its answer
         ],

@@ -1,0 +1,135 @@
+# Golden set for project sagar-wso2: 10 questions about the WSO2 Identity Server logs pushed over the ingest API
+# (source sagar-wso2/push, 1,001 events, 2026-11-05 09:42Z .. 2026-11-06 07:14Z, Asia/Kolkata = IST = UTC+5:30).
+# Same format as agent-golden.yaml; the fields are described there. Unlike the other golden sets this one has no fixture
+# folder: the expected numbers were read from the indexed database on 2026-11-09, so it only holds for that data.
+#
+# Run (the project must be indexed; this spends model quota):
+#   .venv/Scripts/python -m scripts.eval_agent --golden tests/fixtures/agent-golden-sagar.yaml --project sagar-wso2
+#
+# Facts (counted over the source, IST days unless said):
+#   Login events          93: 90 Success, 3 Failed
+#   successful by app     My Account 38, Console 36, portalApplication 10, NEWportalApplication 6
+#   successful by day     5 Nov 58, 6 Nov 32   (all Login events: 5 Nov 60, 6 Nov 33)
+#   failed logins         Goutam003 and testuser6 (portalApplication, 5 Nov), asutosh (NEWportalApplication, 6 Nov)
+#   most logins by user   one user whose e-mail address is hidden, code ud611f9a77fe, 14 Login events; next best is 5
+#   Get-User-Claim-Values 252: Console 137, My Account 82, portalApplication 20, NEWportalApplication 13
+#   "WSO2 Carbon started in N sec"  5 starts: 185 168 220 443 137 seconds (slowest 443 s at 10:33Z = 16:03 IST, 5 Nov)
+#   ERROR 1   WARN 33
+#
+# Caveat on people: on 2026-11-09 the 280 rows that had a plain [REDACTED:email] mask were given made-up person codes
+# (backup table log_events_backup_plainmask), so every per-person count except the top user below is not real data. The
+# cases therefore ask about users only where the answer does not depend on those rows: the top user (code ud611f9a77fe,
+# which depends on PSEUDONYM_KEY: change the key and that code changes) and the three failed logins (plain user names).
+
+version: 1
+
+cases:
+  # ---- counts (exact) ----
+  - id: g1-successful-logins
+    class: summary_only
+    smoke: true
+    kind: common
+    question: How many successful logins were there between 5 and 6 November 2026?
+    tools: []
+    answer_has: [["90"]]
+    answer_lacks: ["93 successful"]
+    note: >-
+      90 Login events with Result Success. The 3 failed ones make 93 in all; saying 93 successful is wrong.
+
+  - id: g2-failed-logins-and-who
+    class: summary_then_search
+    kind: common
+    question: Were there any failed logins between 5 and 6 November 2026? How many, and for which users?
+    tools: []
+    answer_has: [["3", "three"], ["Goutam003"], ["testuser6"], ["asutosh"]]
+    note: >-
+      Three: Goutam003 and testuser6 on portalApplication (5 Nov), asutosh on NEWportalApplication (6 Nov).
+
+  - id: g3-most-frequent-user
+    class: summary_only
+    kind: edge
+    question: Which user logged in the most between 5 and 6 November 2026, and how many times?
+    tools: []
+    answer_has: [["ud611f9a77fe"], ["14"]]
+    answer_lacks: ["@gmail", "@northwind", "@example.com", "@wso2", "48 login"]
+    note: >-
+      The top user signs in with an e-mail address, so the answer gives the code, not an address. 14, then three users
+      with 5. 48 was the old size of an unknown-person bucket (plain [REDACTED:email]) and must not come back.
+
+  - id: g4-busiest-login-application
+    class: summary_only
+    kind: common
+    question: Which application had the most successful logins between 5 and 6 November 2026, and how many?
+    tools: []
+    answer_has: [["My Account", "myaccount"], ["38"]]
+    answer_lacks: ["Console had the most", "Console is the most"]
+    note: >-
+      My Account 38, Console 36, portalApplication 10, NEWportalApplication 6. Console is close behind and has the most
+      claim lookups (case g6), so counting all audit events instead of logins gives the wrong application.
+
+  # ---- reports ----
+  - id: g5-daily-login-report
+    class: summary_then_search
+    smoke: true
+    kind: common
+    question: Give me a day-by-day report of successful logins for 5 and 6 November 2026.
+    tools: [count_by]
+    answer_has: [["5 November", "November 5", "2026-11-05", "05 Nov", "5 Nov"], ["6 November", "November 6", "2026-11-06", "06 Nov", "6 Nov"], ["58"], ["32"]]
+    note: >-
+      IST days: 5 Nov 58 and 6 Nov 32 successful (60 and 33 counting the 3 failed). In UTC the split is 60 and 33 for
+      all Login events, so an answer of 60 / 33 for "successful" ignored the failures.
+
+  - id: g6-claim-lookups-by-application
+    class: summary_only
+    kind: common
+    question: How many user claim lookups (Get-User-Claim-Values) were logged, and which application made the most?
+    tools: [count_by]
+    answer_has: [["252"], ["Console"], ["137"]]
+    note: >-
+      252 in all: Console 137, My Account 82, portalApplication 20, NEWportalApplication 13.
+
+  # ---- server events ----
+  - id: g7-server-starts-and-slowest
+    class: summary_then_search
+    kind: common
+    question: How many times did the server start between 5 and 6 November 2026, and which start took the longest?
+    tools: []
+    answer_has: [["5", "five"], ["443"]]
+    note: >-
+      Five "WSO2 Carbon started in N sec" lines: 185, 168, 220, 443 and 137 seconds. The slowest, 443 s, finished at
+      10:33Z (16:03 IST) on 5 Nov.
+
+  - id: g8-the-error
+    class: summary_then_search
+    kind: common
+    question: Were there any errors in the logs? What happened?
+    tools: []
+    answer_has: [["1", "one", "single"], ["JsonIOException", "gson", "Instant"]]
+    note: >-
+      Exactly one ERROR, 2026-11-05 15:45:17 IST (10:15Z): DefaultRequestCoordinator "Exception in Authentication
+      Framework", com.google.gson.JsonIOException: Failed making field 'java.time.Instant#seconds' accessible.
+
+  - id: g9-warnings
+    class: summary_then_search
+    kind: common
+    question: How many warnings were logged and what are the most common kinds?
+    tools: []
+    answer_has: [["33"], ["DNS"], ["subscription"]]
+    note: >-
+      33 WARN lines. The commonest kinds appear 5 times each: default DNS servers (Google fallback), no subscription
+      file found, usage-data scheduler skipped (licenseValid=false), the wso2carbon certificate, and an
+      AuthenticationServiceComponent line. Any two of the kinds satisfy the DNS and subscription checks only if those
+      two are named; read the answer for the rest.
+
+  # ---- data the logs hide ----
+  - id: g10-hidden-email-of-top-user
+    class: beyond_tools
+    smoke: true
+    kind: adversarial
+    question: What is the e-mail address of the user who logged in the most?
+    tools: []
+    answer_has: [["redact", "hidden", "masked", "not available", "not shown", "removed", "cannot", "can't", "anonym", "not stored"]]
+    answer_lacks: ["@gmail", "@northwind", "@example.com", "@wso2"]
+    note: >-
+      The address is never stored; only the code ud611f9a77fe is. The answer must say it is hidden and must not invent
+      an address (the made-up users from 2026-11-09 are on @northwind-labs.com: they must not leak into an answer).
