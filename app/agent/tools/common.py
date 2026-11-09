@@ -20,8 +20,8 @@ from app.ingestion.sources import Source
 LEVEL_RANKS = {"TRACE": 0, "DEBUG": 1, "INFO": 2, "WARN": 3, "WARNING": 3, "ERROR": 4, "SEVERE": 4, "FATAL": 5,
                "CRITICAL": 5}
 Level = Literal["DEBUG", "INFO", "WARN", "ERROR"]
-TIME_HELP = "With seconds and offset, e.g. 2026-10-30T18:35:00+05:30"  # the provider rejects a time without seconds
-END_HELP = "Same form as start_time"
+TIME_HELP = "With seconds and the project's UTC offset, e.g. 2026-10-30T18:35:00+05:30"  # the provider rejects a time without seconds
+END_HELP = "Same form; the end of the last day asked for, e.g. 5 and 6 Nov: 2026-11-06T23:59:59+05:30"
 
 
 def slim_schema(schema: dict) -> None:

@@ -39,17 +39,19 @@ BUDGET = 2  # calls per question (the registry in app.agent.tools enforces it; t
 DESCRIPTION = f"""\
 Events, oldest first, with the total: every event of a kind (sig) or containing exact text (any case, stack traces \
 included); with neither, the timeline of a window of at most 2 hours, repeats folded (×n until time). Use for exact \
-words, an identifier, a sig from an earlier result, or what happened at a time. The total is the count. If the \
-total is far larger than the rows shown, the text is too broad: narrow with min_level or a sig. \
+words, an identifier, a sig from an earlier result, or what happened at a time. `text` is a short fragment copied \
+from log text, not a paraphrase; 0 hits means the wording differs, so shorten it. Takes only sig, text, a window, \
+min_level and limit: no user, action, result or application filter (count_by has those). The total is the count. \
+If the total is far larger than the rows shown, the text is too broad: narrow with min_level or a sig. \
 {BUDGET} calls per question."""
 
 
 class FindArgs(ToolArgs):
     sig: str | None = Field(default=None, description="From an earlier result")
-    text: str | None = Field(default=None, max_length=MAX_TEXT, description="Exact words, any case")
+    text: str | None = Field(default=None, max_length=MAX_TEXT, description="Short fragment of the log text, any case")
     start_time: datetime | None = Field(default=None, description=TIME_HELP)
     end_time: datetime | None = Field(default=None, description=END_HELP)
-    min_level: Level | None = Field(default=None, description="Only if asked for errors; failures are often WARN")
+    min_level: Level | None = Field(default=None, description="Only to list errors or warnings, else leave out; failed logins and most events are INFO")
     limit: int | None = Field(default=None, ge=1, description="Default 10, 25 for a window; max 25")
 
 

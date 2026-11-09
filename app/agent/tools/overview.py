@@ -38,8 +38,9 @@ BUDGET = 1  # calls per question (the registry in app.agent.tools enforces it; t
 DESCRIPTION = f"""\
 Count events by kind (sig) in a window, most severe then largest first, each kind with its first and last event \
 (L<line>@<time>) to cite. Use first for how many, what kinds, is anything wrong, first or last, and why something \
-fails: the largest error kinds are the causes to follow with find(sig). The source of counts. \
-{BUDGET} call per question."""
+fails: the largest error kinds are the causes to follow with find(sig). Takes only a window, min_level, by_day and \
+top: no action, result, user or application filter. Not for counts by user, application, action or result: that is \
+count_by. {BUDGET} call per question."""
 
 
 class OverviewArgs(ToolArgs):

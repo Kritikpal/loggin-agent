@@ -29,7 +29,8 @@ FILTER_ONLY_QUERY = "error"  # stands in when the model searches by filter alone
 BUDGET = 2  # calls per question (the registry in app.agent.tools enforces it; the model is told in DESCRIPTION)
 
 DESCRIPTION = f"""\
-Events similar in meaning. Use only when the exact words are unknown; otherwise find. A sample of at most 5 hits \
+Events similar in meaning. Use only when the exact words are unknown; otherwise find. Never for counts or who/which \
+questions: those are count_by. A sample of at most 5 hits \
 (10 with `levels`): never count them, follow a good hit with find(sig). `query`: an identifier, plain words or both, \
 no quotes or operators. `by`: k keyword, s semantic match (s alone is a weak lead). {BUDGET} calls per question."""
 

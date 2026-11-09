@@ -1,0 +1,422 @@
+[
+ {
+  "id": "g1-successful-logins",
+  "class": "summary_only",
+  "kind": "common",
+  "question": "How many successful logins were there between 5 and 6 November 2026?",
+  "answer": "There were **90 successful login events** recorded across the two days (58 on 5 Nov 2026 and 32 on 6 Nov 2026) (count_by result by day, total 90).",
+  "tool_calls": [
+   {
+    "name": "count_by",
+    "turn": 1,
+    "args": {
+     "action": "Login",
+     "by": [
+      "day"
+     ],
+     "end_time": "2026-11-06T23:59:59+05:30",
+     "result": "Success",
+     "start_time": "2026-11-05T00:00:00+05:30"
+    },
+    "status": "success",
+    "result": "window 2026-11-04T18:30:00Z..2026-11-06T18:29:59Z · filters action=Login result=Success · by day · total 90 · groups 2 · columns: day | count | first | last\n2026-11-05 | 58 | L?@11-05T10:33Z | L?@11-05T12:02Z\n2026-11-06 | 32 | L?@11-06T06:32Z | L?@11-06T07:14Z\nfiles 1, indexed 1"
+   }
+  ],
+  "model_calls": 2,
+  "attempts": 1,
+  "seconds": 3.3,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": true,
+   "answer_lacks": true,
+   "passed": true
+  }
+ },
+ {
+  "id": "g2-failed-logins-and-who",
+  "class": "summary_then_search",
+  "kind": "common",
+  "question": "Were there any failed logins between 5 and 6 November 2026? How many, and for which users?",
+  "answer": "There were failed‑login events on both days.\n\n* **Total failed logins:** 3 (one on 5 Nov and one on 6 Nov) – (count_by result, total 3)  \n* **Users involved:** asutosh (1), Goutam003 (1), testuser6 (1) – (count_by result, groups 3, each count 1)\n\nSo, three distinct users each had a single failed login between 5 Nov 2026 00:00 +05:30 and 6 Nov 2026 23:59 +05:30.",
+  "tool_calls": [
+   {
+    "name": "count_by",
+    "turn": 1,
+    "args": {
+     "action": "Login",
+     "by": [
+      "user"
+     ],
+     "end_time": "2026-11-06T23:59:59+05:30",
+     "result": "Failed",
+     "start_time": "2026-11-05T00:00:00+05:30"
+    },
+    "status": "success",
+    "result": "window 2026-11-04T18:30:00Z..2026-11-06T18:29:59Z · filters action=Login result=Failed · by user · total 3 · groups 3 · columns: user | count | first | last\nasutosh | 1 | L?@11-06T07:09Z | L?@11-06T07:09Z\nGoutam003 | 1 | L?@11-05T11:39Z | L?@11-05T11:39Z\ntestuser6 | 1 | L?@11-05T12:01Z | L?@11-05T12"
+   },
+   {
+    "name": "find",
+    "turn": 2,
+    "args": {
+     "end_time": "2026-11-06T23:59:59+05:30",
+     "limit": 25,
+     "min_level": "WARN",
+     "start_time": "2026-11-05T00:00:00+05:30",
+     "text": "Login failed"
+    },
+    "status": "success",
+    "result": "total 0 · shown 0 · columns: time line level sig text\nfiles 1, indexed 1"
+   },
+   {
+    "name": "search_logs",
+    "turn": 3,
+    "args": {
+     "end_time": "2026-11-06T23:59:59+05:30",
+     "levels": [
+      "WARN",
+      "ERROR"
+     ],
+     "query": "Login",
+     "start_time": "2026-11-05T00:00:00+05:30",
+     "top_k": 20
+    },
+    "status": "success",
+    "result": "file push · hits 10 · shown 10 · columns: time line level sig by text\n11-05T10:26:46Z L? WARN daf92dff s TID: [] [] [2026-11-05 15:56:46,687] [] WARN {org.wso2.carbon.identity.auth.service.internal.AuthenticationServiceComponent} -\n11-05T09:42:58Z L? WARN daf92dff s TID: [] [] [2026-11-05 15:12:58,9"
+   },
+   {
+    "name": "find",
+    "turn": 4,
+    "args": {
+     "end_time": "2026-11-06T23:59:59+05:30",
+     "limit": 5,
+     "min_level": "WARN",
+     "start_time": "2026-11-05T00:00:00+05:30",
+     "text": "asutosh"
+    },
+    "status": "success",
+    "result": "file push · day 2026-11-06 · total 25 · shown 5 · columns: time line level sig text\n07:09:03Z L? INFO d4000556 Initiator=[REDACTED:email:uf426fe5a66a] Action=Add-User Target=asutosh Data={\"ServiceProviderName\":\"Console\",\"Claims\":{\"http://wso2.org/claims/username\":\"asutosh\",\"http://wso2.org/claims/us"
+   },
+   {
+    "name": "find",
+    "turn": 5,
+    "args": {
+     "end_time": "2026-11-06T23:59:59+05:30",
+     "min_level": "WARN",
+     "start_time": "2026-11-05T00:00:00+05:30",
+     "text": "asutosh"
+    },
+    "status": "success",
+    "result": "file push · day 2026-11-06 · total 25 · shown 10 · columns: time line level sig text\n07:09:03Z L? INFO d4000556 Initiator=[REDACTED:email:uf426fe5a66a] Action=Add-User Target=asutosh Data={\"ServiceProviderName\":\"Console\",\"Claims\":{\"http://wso2.org/claims/username\":\"asutosh\",\"http://wso2.org/claims/u"
+   },
+   {
+    "name": "find",
+    "turn": 6,
+    "args": {
+     "end_time": "2026-11-06T23:59:59+05:30",
+     "min_level": "WARN",
+     "start_time": "2026-11-05T00:00:00+05:30",
+     "text": "failed login"
+    },
+    "status": "success",
+    "result": "total 0 · shown 0 · columns: time line level sig text\nfiles 1, indexed 1"
+   }
+  ],
+  "model_calls": 7,
+  "attempts": 1,
+  "seconds": 110.2,
+  "checks": {
+   "tools_order": true,
+   "budget": false,
+   "answer_has": true,
+   "passed": false
+  }
+ },
+ {
+  "id": "g3-most-frequent-user",
+  "class": "summary_only",
+  "kind": "edge",
+  "question": "Which user logged in the most between 5 and 6 November 2026, and how many times?",
+  "answer": "The user with the highest number of logins in the period 5 – 6 Nov 2026 is the account shown as **[REDACTED:email:ud611f9a77fe]**, which logged in **14 times** (out of 93 total login events for 42 users)【count_by】.",
+  "tool_calls": [
+   {
+    "name": "count_by",
+    "turn": 1,
+    "args": {
+     "action": "Login",
+     "by": [
+      "user"
+     ],
+     "end_time": "2026-11-06T23:59:59+05:30",
+     "start_time": "2026-11-05T00:00:00+05:30",
+     "top": 1
+    },
+    "status": "success",
+    "result": "window 2026-11-04T18:30:00Z..2026-11-06T18:29:59Z · filters action=Login · by user · total 93 · groups 42 · columns: user | count | first | last\n[REDACTED:email:ud611f9a77fe] | 14 | L?@11-06T06:32Z | L?@11-06T07:14Z\nnote: 41 more groups; raise top (max 50) or narrow the window; [REDACTED:email:u...]"
+   }
+  ],
+  "model_calls": 2,
+  "attempts": 1,
+  "seconds": 2.6,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": true,
+   "answer_lacks": true,
+   "passed": true
+  }
+ },
+ {
+  "id": "g4-busiest-login-application",
+  "class": "summary_only",
+  "kind": "common",
+  "question": "Which application had the most successful logins between 5 and 6 November 2026, and how many?",
+  "answer": "The **My Account** application recorded the highest number of successful logins in the period 5 – 6 Nov 2026, with **38** successful login events (by application).",
+  "tool_calls": [
+   {
+    "name": "count_by",
+    "turn": 1,
+    "args": {
+     "action": "Login",
+     "by": [
+      "application"
+     ],
+     "end_time": "2026-11-06T23:59:59+05:30",
+     "result": "Success",
+     "start_time": "2026-11-05T00:00:00+05:30",
+     "top": 10
+    },
+    "status": "success",
+    "result": "window 2026-11-04T18:30:00Z..2026-11-06T18:29:59Z · filters action=Login result=Success · by application · total 90 · groups 4 · columns: application | count | first | last\nMy Account | 38 | L?@11-05T10:34Z | L?@11-06T07:10Z\nConsole | 36 | L?@11-05T10:33Z | L?@11-06T07:14Z\nportalApplication | 10 | L"
+   }
+  ],
+  "model_calls": 2,
+  "attempts": 1,
+  "seconds": 1.8,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": true,
+   "answer_lacks": true,
+   "passed": true
+  }
+ },
+ {
+  "id": "g5-daily-login-report",
+  "class": "summary_then_search",
+  "kind": "common",
+  "question": "Give me a day-by-day report of successful logins for 5 and 6 November 2026.",
+  "answer": "**Successful login counts**\n\n| Day (2026) | Successful logins |\n|------------|-------------------|\n| 5 Nov | 58 |\n| 6 Nov | 32 |\n\nThese totals come from a `count_by` query that grouped “Login” events with result **Success** by day for the period 2026‑11‑05 00:00 to 2026‑11‑06 23:59 (+05:30) (count_by).",
+  "tool_calls": [
+   {
+    "name": "count_by",
+    "turn": 1,
+    "args": {
+     "action": "Login",
+     "by": [
+      "day"
+     ],
+     "end_time": "2026-11-06T23:59:59+05:30",
+     "result": "Success",
+     "start_time": "2026-11-05T00:00:00+05:30"
+    },
+    "status": "success",
+    "result": "window 2026-11-04T18:30:00Z..2026-11-06T18:29:59Z · filters action=Login result=Success · by day · total 90 · groups 2 · columns: day | count | first | last\n2026-11-05 | 58 | L?@11-05T10:33Z | L?@11-05T12:02Z\n2026-11-06 | 32 | L?@11-06T06:32Z | L?@11-06T07:14Z\nfiles 1, indexed 1"
+   },
+   {
+    "name": "overview",
+    "turn": 2,
+    "args": {
+     "end_time": "2026-11-06T23:59:59+05:30",
+     "min_level": "INFO",
+     "start_time": "2026-11-05T00:00:00+05:30",
+     "top": 5
+    },
+    "status": "success",
+    "result": "window 2026-11-04T18:30:00Z..2026-11-06T18:29:59Z · total 909 · INFO 876 · WARN 32 · ERROR 1 · hidden none · file push · columns: sig count level first last template\n842ab835 1 ERROR L?@11-05T10:15Z L?@11-05T10:15Z {DefaultRequestCoordinator} Exception in Authentication Frameworkcom.JsonIOException:"
+   }
+  ],
+  "model_calls": 3,
+  "attempts": 1,
+  "seconds": 3.8,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": true,
+   "passed": true
+  }
+ },
+ {
+  "id": "g6-claim-lookups-by-application",
+  "class": "summary_only",
+  "kind": "common",
+  "question": "How many user claim lookups (Get-User-Claim-Values) were logged, and which application made the most?",
+  "answer": "There were **252** user‑claim‑lookup events (action = Get‑User‑Claim‑Values) logged. The application that performed the most lookups was **Console**, with **137** of those events (the next highest was My Account with 82) (by application).",
+  "tool_calls": [
+   {
+    "name": "count_by",
+    "turn": 1,
+    "args": {
+     "action": "Get-User-Claim-Values",
+     "by": [
+      "application"
+     ],
+     "top": 100
+    },
+    "status": "success",
+    "result": "window all · filters action=Get-User-Claim-Values · by application · total 252 · groups 4 · columns: application | count | first | last\nConsole | 137 | L?@11-05T10:33Z | L?@11-06T07:14Z\nMy Account | 82 | L?@11-05T10:34Z | L?@11-06T07:10Z\nportalApplication | 20 | L?@11-05T11:31Z | L?@11-05T12:01Z\nNEW"
+   }
+  ],
+  "model_calls": 2,
+  "attempts": 1,
+  "seconds": 9.3,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": true,
+   "passed": true
+  }
+ },
+ {
+  "id": "g7-server-starts-and-slowest",
+  "class": "summary_then_search",
+  "kind": "common",
+  "question": "How many times did the server start between 5 and 6 November 2026, and which start took the longest?",
+  "answer": "The logs contain **5 server‑start events** between 5 Nov 2026 00:00 +05:30 and 6 Nov 2026 23:59 +05:30 (search_logs hit count 5)【file L? 2026-11-05T10:33:19Z, INFO】.\n\nThe longest start was the one on **5 Nov 2026 at 10:33:19 Z**, where the Carbon server reported **“started in 443 sec”**【file L? 2026-11-05T10:33:19Z, INFO】.",
+  "tool_calls": [
+   {
+    "name": "find",
+    "turn": 1,
+    "args": {
+     "end_time": "2026-11-06T23:59:59+05:30",
+     "limit": 10,
+     "start_time": "2026-11-05T00:00:00+05:30",
+     "text": "Server started"
+    },
+    "status": "success",
+    "result": "total 0 · shown 0 · columns: time line level sig text\nfiles 1, indexed 1"
+   },
+   {
+    "name": "search_logs",
+    "turn": 2,
+    "args": {
+     "end_time": "2026-11-06T23:59:59+05:30",
+     "query": "started",
+     "start_time": "2026-11-05T00:00:00+05:30",
+     "top_k": 10
+    },
+    "status": "success",
+    "result": "file push · hits 5 · shown 5 · columns: time line level sig by text\n11-06T06:14:43Z L? INFO d33196b6 sk WSO2 Carbon started in 137 sec\n11-05T10:33:19Z L? INFO d33196b6 sk WSO2 Carbon started in 443 sec\n11-05T09:59:37Z L? INFO d33196b6 sk WSO2 Carbon started in 168 sec\n11-05T10:15:14Z L? INFO d33196b"
+   }
+  ],
+  "model_calls": 3,
+  "attempts": 1,
+  "seconds": 2.7,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": true,
+   "passed": true
+  }
+ },
+ {
+  "id": "g8-the-error",
+  "class": "summary_then_search",
+  "kind": "common",
+  "question": "Were there any errors in the logs? What happened?",
+  "answer": "Yes, the logs contain a single error event.\n\n- **What happened:** At 10:15:17 UTC on 2026‑11‑05 the Authentication Framework threw a `JsonIOException`. The message indicates that the framework failed to make the field `java.time.Instant#seconds` accessible, suggesting a visibility issue or the need for a custom `TypeAdapter` for that type. (842ab835 L?@10:15Z, 10:15:17Z)",
+  "tool_calls": [
+   {
+    "name": "overview",
+    "turn": 1,
+    "args": {
+     "min_level": "ERROR",
+     "top": 5
+    },
+    "status": "success",
+    "result": "window all · total 1 · ERROR 1 · hidden INFO 876, unlevelled 91, WARN 33 · file push · columns: sig count level first last template\n842ab835 1 ERROR L?@10:15Z L?@10:15Z {DefaultRequestCoordinator} Exception in Authentication Frameworkcom.JsonIOException: Fail…r write a custom TypeAdapter for its dec"
+   },
+   {
+    "name": "find",
+    "turn": 2,
+    "args": {
+     "limit": 5,
+     "sig": "842ab835"
+    },
+    "status": "success",
+    "result": "file push · day 2026-11-05 · total 1 · shown 1 · columns: time line level sig text\n10:15:17Z L? ERROR 842ab835 Exception in Authentication Frameworkcom.google.gson.JsonIOException: Failed making field 'java.time.Instant#seconds' accessible; either change its visibility or write a custom TypeAdapter "
+   }
+  ],
+  "model_calls": 3,
+  "attempts": 1,
+  "seconds": 4.3,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": true,
+   "passed": true
+  }
+ },
+ {
+  "id": "g9-warnings",
+  "class": "summary_then_search",
+  "kind": "common",
+  "question": "How many warnings were logged and what are the most common kinds?",
+  "answer": "The logs contain **33 warning‑level events** (WARN 33) out of 34 total events in the window (overview result).\n\nThe most common warning kinds (by signature) are:\n\n| Count | Signature | Example message |\n|------|-----------|-----------------|\n| 5 | 8a6f6e54 | “Default DNS servers: … (Google Public DNS as a fallback)” |\n| 5 | daf92dff | “{AuthenticationServiceComponent} … WARN {AuthenticationServiceComponent} –” |\n| 5 | 739bd156 | “The trusted certificate with alias [wso2carbon] …” |\n| 5 | 9bdeb48c | “No subscription file found matching pattern …” |\n| 5 | 835adcce | “Skipping scheduler startup. licenseValid=false, tablesAvailable=false” |\n| 4 | 5ef58860 | “Required table … does not exist in the database. Usage data …” |\n| 3 | da57075a | “Provided Callback URL does not match with the registered one.” |\n| 1 | ebc1cd8e | “Internal authentication is utilizing default credentials” |\n\nThese signatures account for all 33 warnings, with the five‑event signatures being the most frequent. (overview result)",
+  "tool_calls": [
+   {
+    "name": "overview",
+    "turn": 1,
+    "args": {
+     "min_level": "WARN",
+     "top": 10
+    },
+    "status": "success",
+    "result": "window all · total 34 · WARN 33 · ERROR 1 · hidden INFO 876, unlevelled 91 · file push · columns: sig count level first last template\n842ab835 1 ERROR L?@11-05T10:15Z L?@11-05T10:15Z {DefaultRequestCoordinator} Exception in Authentication Frameworkcom.JsonIOException: Fail…r write a custom TypeAdapt"
+   }
+  ],
+  "model_calls": 2,
+  "attempts": 1,
+  "seconds": 3.2,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": true,
+   "passed": true
+  }
+ },
+ {
+  "id": "g10-hidden-email-of-top-user",
+  "class": "beyond_tools",
+  "kind": "adversarial",
+  "question": "What is the e-mail address of the user who logged in the most?",
+  "answer": "The user with the highest number of login events in the period 2026‑11‑01 to 2026‑11‑09 is the account shown as **[REDACTED:email:ud611f9a77fe]**, which logged 14 logins (first seen 2026‑11‑06 06:32 Z, last seen 2026‑11‑06 07:14 Z) (count_by L?, 2026‑11‑09T23:59:59+05:30). The actual e‑mail address is not present in the indexed logs—it is redacted.",
+  "tool_calls": [
+   {
+    "name": "count_by",
+    "turn": 1,
+    "args": {
+     "action": "Login",
+     "by": [
+      "user"
+     ],
+     "end_time": "2026-11-09T23:59:59+05:30",
+     "start_time": "2026-11-01T00:00:00+05:30",
+     "top": 10
+    },
+    "status": "success",
+    "result": "window 2026-10-31T18:30:00Z..2026-11-09T18:29:59Z · filters action=Login · by user · total 93 · groups 42 · columns: user | count | first | last\n[REDACTED:email:ud611f9a77fe] | 14 | L?@11-06T06:32Z | L?@11-06T07:14Z\n[REDACTED:email:u006dc0ff93a] | 5 | L?@11-05T10:48Z | L?@11-05T11:53Z\n[REDACTED:emai"
+   }
+  ],
+  "model_calls": 2,
+  "attempts": 1,
+  "seconds": 2.4,
+  "checks": {
+   "tools_order": true,
+   "budget": true,
+   "answer_has": true,
+   "answer_lacks": true,
+   "passed": true
+  }
+ }
+]

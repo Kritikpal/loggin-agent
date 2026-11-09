@@ -8,7 +8,7 @@ any event.
 
 import logging
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Literal
 
@@ -45,11 +45,21 @@ MAX_TOP = 50
 HIDDEN_NOTE = ("[REDACTED:email:u...] is one person whose address is hidden; the same code is the same person; "
                "a plain [REDACTED:email] is an unknown person")
 
+# Logins at a steady interval are most likely automatic session renewals, not people signing in (sagar-wso2: one user,
+# 14 Console logins, six exactly 5 minutes apart). The tool says so in a note; the model only has to pass it on.
+STEADY_DIMENSIONS = ("user", "actor", "application")
+STEADY_MIN_GAPS = 4  # equal gaps needed: fewer could be chance
+STEADY_MIN_PERIOD = 30.0  # seconds: a burst of near-simultaneous events is not a period
+STEADY_TOLERANCE = 0.03  # of the period, at least 2 s: renewals drift by a second or so
+STEADY_SHARE = 3  # at least 1 in 3 of a group's gaps must be the same, so a few extra events do not hide a rhythm
+
 DESCRIPTION = (
     "Count events by one or two fields: user, application, action, result, day, hour, level, target, actor. Use for "
     "how many logins or failures, who or which application the most, how many different users (the groups figure) "
     "and a report per day. Filter by action, result, application or user. Counts are exact: never count listed "
-    "events yourself. An event is one log line, not a session. "
+    "events yourself. An event is one log line, not a session. The filters exist only here: find and overview do not "
+    "take them. When the result answers the question, answer: no follow-up call. A note may flag logins at a steady "
+    "interval as likely session renewals: count them as login events, not as people signing in. "
     f"{BUDGET} calls per question."
 )
 
@@ -67,6 +77,28 @@ class Group:
     last_file: str
     last_line: int | None
     last_at: datetime | None
+    steady: tuple[int, float] | None = None  # (equal gaps, their mean in seconds) when Login events come at an interval
+
+
+def steady_period(times: Sequence[datetime]) -> tuple[int, float] | None:
+    """The most common gap between consecutive events, when enough gaps agree: (how many, their mean in seconds)."""
+    ordered = sorted(times)
+    gaps = [(later - earlier).total_seconds() for earlier, later in zip(ordered, ordered[1:])]
+    best: list[float] = []
+    for candidate in gaps:
+        if candidate < STEADY_MIN_PERIOD:
+            continue
+        tolerance = max(2.0, STEADY_TOLERANCE * candidate)
+        near = [gap for gap in gaps if abs(gap - candidate) <= tolerance]
+        if len(near) > len(best):
+            best = near
+    if len(best) < STEADY_MIN_GAPS or len(best) * STEADY_SHARE < len(gaps):
+        return None
+    return len(best), sum(best) / len(best)
+
+
+def period_text(seconds: float) -> str:
+    return f"{round(seconds / 60)} min" if seconds >= 90 else f"{round(seconds)} s"
 
 
 @dataclass(frozen=True)
@@ -116,7 +148,23 @@ async def group_counts(
     groups = tuple(
         Group(tuple(r[i] for i in range(len(keys))), r.n, r.first_file, r.first_line, r.first_at, r.last_file,
               r.last_line, r.last_at) for r in rows)
+    if len(by) == 1 and by[0] in STEADY_DIMENSIONS and filters.get("action", "").lower() == "login":
+        groups = await _flag_steady(session, groups, inner, params)
     return Counts(int(rows[0].total) if rows else 0, int(rows[0].groups) if rows else 0, int(missing or 0), groups)
+
+
+async def _flag_steady(session: AsyncSession, groups: tuple[Group, ...], inner: str, params: Mapping) -> tuple[Group, ...]:
+    """Marks the shown groups whose Login events come at a steady interval. One more read of the groups' event times."""
+    checked = [g.key[0] for g in groups if g.n > STEADY_MIN_GAPS]
+    if not checked:
+        return groups
+    rows = (await session.execute(
+        text(f"select k0, occurred_at from ({inner}) e where k0 = any(:steady_keys) and occurred_at is not null"),
+        {**params, "steady_keys": checked})).all()
+    times: dict[str, list[datetime]] = {}
+    for key, at in rows:
+        times.setdefault(key, []).append(at)
+    return tuple(replace(g, steady=steady_period(times.get(g.key[0], []))) for g in groups)
 
 
 class CountByArgs(ToolArgs):
@@ -175,4 +223,9 @@ def render_counts(counts: Counts, *, by: Sequence[str], filters: Mapping[str, st
         notes.append(f"{counts.groups - len(counts.rows)} more groups; raise top (max {MAX_TOP}) or narrow the window")
     if any(part.startswith("[REDACTED:email") for g in counts.rows for part in g.key):
         notes.append(HIDDEN_NOTE)
+    for g in counts.rows:
+        if g.steady:
+            gaps, period = g.steady
+            notes.append(f"{' / '.join(g.key)}: {gaps} gaps of about {period_text(period)} between its {g.n} events; "
+                         "likely automatic session renewals, not separate sign-ins")
     return fitted(header, lines, "; ".join(notes) or None, coverage, what="rows")

@@ -50,11 +50,13 @@ cases:
     kind: edge
     question: Which user logged in the most between 5 and 6 November 2026, and how many times?
     tools: []
-    answer_has: [["ud611f9a77fe"], ["14"]]
+    answer_has: [["ud611f9a77fe"], ["14"], ["renewal", "refresh", "automatic", "not separate", "not people", "background"]]
     answer_lacks: ["@gmail", "@northwind", "@example.com", "@wso2", "48 login"]
     note: >-
       The top user signs in with an e-mail address, so the answer gives the code, not an address. 14, then three users
-      with 5. 48 was the old size of an unknown-person bucket (plain [REDACTED:email]) and must not come back.
+      with 5. 48 was the old size of an unknown-person bucket (plain [REDACTED:email]) and must not come back. Six of
+      the 14 Console logins are 5 minutes apart (session renewals): count_by writes a note saying so and the answer
+      passes it on instead of saying the person signed in 14 times.
 
   - id: g4-busiest-login-application
     class: summary_only
