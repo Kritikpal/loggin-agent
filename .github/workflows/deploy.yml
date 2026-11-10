@@ -24,6 +24,7 @@ jobs:
           sshpass -e ssh "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" bash -s <<'REMOTE'
           set -euo pipefail
           DIR=/home/iamuser/logging-agent/loggin-agent
+          git config --global --add safe.directory "$DIR"  # repo is owned by iamuser, we may log in as another user
           if [ -d "$DIR/.git" ]; then
             git -C "$DIR" pull --ff-only
           else
