@@ -1,0 +1,37 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency: deploy  # never run two deploys at once
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Clone or update, build, start
+        run: |
+          ssh -i ~/.ssh/id_deploy "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" bash -s <<'REMOTE'
+          set -euo pipefail
+          DIR=/home/iamuser/logging-agent/loggin-agent
+          if [ -d "$DIR/.git" ]; then
+            git -C "$DIR" pull --ff-only
+          else
+            mkdir -p "$(dirname "$DIR")"
+            git clone https://github.com/Kritikpal/loggin-agent.git "$DIR"
+          fi
+          cd "$DIR"
+          # .env (POSTGRES_PASSWORD, GROQ_API_KEY, ...) lives on the server and is never in git
+          test -f .env || { echo "missing $DIR/.env"; exit 1; }
+          docker compose up -d --build
+          docker compose ps
+          REMOTE
