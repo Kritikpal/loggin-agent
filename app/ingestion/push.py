@@ -20,7 +20,7 @@ from app.core.config import get_settings
 from app.core.errors import InvalidPayloadError, NotFoundError, PayloadTooLargeError, UnauthorizedError
 from app.ingestion.assembler import RawEvent
 from app.ingestion.pipeline import prepare_event
-from app.ingestion.projects import NOT_FOUND
+from app.ingestion.projects import NOT_FOUND, hash_token
 from app.ingestion.readers.base import SourceEvent
 from app.ingestion.pseudonym import configured_pseudonym_key
 from app.ingestion.redaction import redact
@@ -38,27 +38,33 @@ LOCATOR = {"kind": "push"}
 def check_token(source: PushSource, authorization: str | None) -> None:
     """404 when the project has no token configured (indistinguishable from an unknown project), 401 when the
     request's bearer token is missing or wrong."""
+    scheme, _, supplied = (authorization or "").partition(" ")
+    if source.token_hash:  # a database project: only the hash of its token is kept
+        if scheme.lower() != "bearer" or not hmac.compare_digest(hash_token(supplied), source.token_hash):
+            raise UnauthorizedError("Missing or invalid token.")
+        return
+    if not source.token_env:
+        raise NotFoundError(NOT_FOUND)
     # values from .env reach Settings.model_extra, not os.environ; the key's case depends on where it came from
     extra = {key.lower(): value for key, value in (get_settings().model_extra or {}).items()}
     expected = os.environ.get(source.token_env) or str(extra.get(source.token_env.lower(), ""))
     if not expected:
         raise NotFoundError(NOT_FOUND)
-    scheme, _, supplied = (authorization or "").partition(" ")
     if scheme.lower() != "bearer" or not hmac.compare_digest(supplied.encode(), expected.encode()):
         raise UnauthorizedError("Missing or invalid token.")
 
 
-async def read_body(request: Request) -> bytes:
+async def read_body(request: Request, *, limit: int | None = None, setting: str = "PUSH_MAX_BODY_BYTES") -> bytes:
     """The body, stopping as soon as it is over the limit instead of buffering what a client keeps sending."""
-    limit = get_settings().push_max_body_bytes
+    limit = limit or get_settings().push_max_body_bytes
     declared = request.headers.get("content-length", "")
     if declared.isdigit() and int(declared) > limit:
-        raise PayloadTooLargeError(f"The body is over {limit} bytes (PUSH_MAX_BODY_BYTES).")
+        raise PayloadTooLargeError(f"The body is over {limit} bytes ({setting}).")
     chunks, size = [], 0
     async for chunk in request.stream():
         size += len(chunk)
         if size > limit:
-            raise PayloadTooLargeError(f"The body is over {limit} bytes (PUSH_MAX_BODY_BYTES).")
+            raise PayloadTooLargeError(f"The body is over {limit} bytes ({setting}).")
         chunks.append(chunk)
     return b"".join(chunks)
 

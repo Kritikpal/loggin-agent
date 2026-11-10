@@ -5,8 +5,10 @@ looked up among the scanned projects, never joined into a path. A broken project
 never hides the others; a file whose name cannot become an id is skipped with a reason the API shows.
 """
 
+import hashlib
 import logging
 import re
+import secrets
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,7 +53,7 @@ class Project:
     type: str = ""
     timezone: str = "UTC"
     include: str = DEFAULT_INCLUDE
-    folder: Path
+    folder: Path | None = None  # None for a database project, which has no files on disk
     files: tuple[FileSource, ...] = ()
     skipped: tuple[SkippedFile, ...] = ()
     error: str | None = None
@@ -116,8 +118,55 @@ def _read(path: Path) -> dict[str, Any]:
     return document
 
 
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def new_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def project_from_config(project_id: str, doc: dict[str, Any], *, token_hash: str) -> Project:
+    """A database project: validated like a project.yaml, with its pushed/uploaded logs as the only source."""
+    where = f"project '{project_id}'"
+    title, description, include, settings = _common(doc, where)
+    push = PushSource(id=f"{project_id}/{PUSH_STEM}", token_hash=token_hash, **settings)
+    return Project(
+        id=project_id, title=title, description=description, type=doc["type"], timezone=settings["timezone"],
+        include=include, push_source=push)
+
+
+def row_doc(row: Any) -> dict[str, Any]:
+    """A database row as the same mapping a project.yaml gives."""
+    return {"title": row.title, "description": row.description, "type": row.type, "timezone": row.timezone,
+            **row.config}
+
+
+def project_from_row(row: Any) -> Project:
+    """Any failure becomes this project's error, as for a folder: one bad row must never hide the others."""
+    try:
+        return project_from_config(row.id, row_doc(row), token_hash=row.push_token_hash)
+    except ConfigError as exc:
+        error = exc.message
+    except (ValueError, TypeError) as exc:
+        error = f"the project's settings could not be loaded ({type(exc).__name__}): {exc}"
+    logger.warning("Project %s is invalid: %s", row.id, error)
+    return Project(id=row.id, title=row.title, error=error)
+
+
 def _parse(folder: Path, doc: dict[str, Any]) -> Project:
     where = f"project '{folder.name}'"
+    title, description, include, settings = _common(doc, where)
+    token_env = _token_env(doc.get("push_token_env"), where)
+    files, skipped = _files(folder, include, settings, reserve_push=token_env is not None)
+    push = PushSource(id=f"{folder.name}/{PUSH_STEM}", token_env=token_env, **settings) if token_env else None
+    return Project(
+        id=folder.name, title=title, description=description, type=doc["type"], timezone=settings["timezone"],
+        include=include, folder=folder, files=files, skipped=skipped, push_source=push)
+
+
+def _common(doc: dict[str, Any], where: str) -> tuple[str, str, str, dict[str, Any]]:
+    """The settings both kinds of project share: title, description, include and the parsing settings."""
     title = _text(doc.get("title"), "title", MAX_TITLE, where, required=True)
     description = _text(doc.get("description", ""), "description", MAX_DESCRIPTION, where, required=False)
     type_name = doc.get("type")
@@ -134,12 +183,7 @@ def _parse(folder: Path, doc: dict[str, Any]) -> Project:
         "app_packages": parse_packages(doc.get("app_packages", list(preset.app_packages)), where),
         "field_mappings": parse_mappings(doc.get("field_mappings", {}), where),
     }
-    token_env = _token_env(doc.get("push_token_env"), where)
-    files, skipped = _files(folder, include, settings, reserve_push=token_env is not None)
-    push = PushSource(id=f"{folder.name}/{PUSH_STEM}", token_env=token_env, **settings) if token_env else None
-    return Project(
-        id=folder.name, title=title, description=description, type=doc["type"], timezone=settings["timezone"],
-        include=include, folder=folder, files=files, skipped=skipped, push_source=push)
+    return title, description, include, settings
 
 
 def _token_env(value: Any, where: str) -> str | None:

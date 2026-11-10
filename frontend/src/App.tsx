@@ -27,6 +27,7 @@ import {
   type ToolCall,
   type WorkflowStatus,
 } from './api'
+import { ManageProjects } from './Projects'
 
 const MAX_LEN = 2000 // ChatRequest.message limit
 const EXAMPLES = [
@@ -44,6 +45,7 @@ const STATUS: Record<Exclude<WorkflowStatus, 'COMPLETED'>, { color: 'amber' | 'j
 const ERROR_TITLE: Record<string, string> = {
   network: 'Offline.',
   unreachable: 'Server unreachable.',
+  unauthorized: 'Not allowed.',
   ai_unavailable: 'AI unavailable.',
   validation_error: 'Invalid message.',
   not_found: 'Not found.',
@@ -81,20 +83,25 @@ export default function App() {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [turns, decisions, conflictStates])
 
-  // Projects are folders on the server; they change only when someone copies files there, so one load is enough.
-  useEffect(() => {
-    let current = true
-    listProjects()
+  // Projects live in the database and change through the Projects dialog, which asks for a reload.
+  // `removedId` is a project that was just deleted: an open chat about it ends.
+  function loadProjects(removedId?: string) {
+    return listProjects()
       .then((list) => {
-        if (!current) return
         setProjects(list)
+        setProjectsError(null)
         const usable = list.filter((p) => p.status === 'ok')
-        if (usable.length === 1) setProjectId(usable[0].id)
+        if (removedId && removedId === projectId) {
+          newChat()
+          setProjectId(usable.length === 1 ? usable[0].id : null)
+        } else if (projectId === null && usable.length === 1) setProjectId(usable[0].id)
       })
-      .catch((e) => current && setProjectsError(toApiError(e)))
-    return () => {
-      current = false
-    }
+      .catch((e) => setProjectsError(toApiError(e)))
+  }
+
+  useEffect(() => {
+    loadProjects()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- first load only; later loads are asked for by the dialog
   }, [])
 
   const patchTurn = (id: number, patch: Partial<Turn>) => setTurns((ts) => ts.map((t) => (t.id === id ? { ...t, ...patch } : t)))
@@ -188,9 +195,12 @@ export default function App() {
             </Code>
           )}
         </Flex>
-        <Button variant="soft" color="gray" onClick={newChat} disabled={busy || turns.length === 0}>
-          <PlusIcon /> New chat
-        </Button>
+        <Flex gap="2">
+          <ManageProjects projects={projects} onChanged={loadProjects} />
+          <Button variant="soft" color="gray" onClick={newChat} disabled={busy || turns.length === 0}>
+            <PlusIcon /> New chat
+          </Button>
+        </Flex>
       </Flex>
 
       <Box flexGrow="1" style={{ overflowY: 'auto' }}>
@@ -303,7 +313,7 @@ function ProjectPicker({ projects, error, value, disabled, onChange }: ProjectPi
   if (projects.length === 0) {
     return (
       <Text size="1" color="gray">
-        No projects on the server
+        No projects yet: add one under Projects
       </Text>
     )
   }
@@ -314,7 +324,7 @@ function ProjectPicker({ projects, error, value, disabled, onChange }: ProjectPi
         {projects.map((p) => (
           <Select.Item key={p.id} value={p.id} disabled={p.status !== 'ok'} title={p.error ?? undefined}>
             {p.title}
-            {p.status !== 'ok' ? ' (invalid)' : ` · ${p.file_count} file${p.file_count === 1 ? '' : 's'}`}
+            {p.status !== 'ok' ? ' (invalid)' : ` · ${p.type}`}
           </Select.Item>
         ))}
       </Select.Content>

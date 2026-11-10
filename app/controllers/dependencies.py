@@ -1,21 +1,35 @@
 """The project and agent as FastAPI dependencies, so tests can swap them via app.dependency_overrides."""
 
+import hmac
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, Header
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_session
-from app.core.errors import ProjectInvalidError
+from app.core.errors import ProjectInvalidError, UnauthorizedError
 from app.ingestion.coverage import time_spans
-from app.ingestion.projects import Project, find_project, scan_projects
+from app.ingestion.projects import Project, find_project, project_from_row
+from app.models.project import ProjectRow
 
 
-def get_projects() -> tuple[Project, ...]:
-    """The project folders under LOGS_ROOT, scanned per request so a copied-in file or project applies at once.
-    ponytail: a directory scan per request; cache it if it ever shows in latency."""
-    return scan_projects(get_settings().logs_root)
+async def get_projects(session: Annotated[AsyncSession, Depends(get_session)]) -> tuple[Project, ...]:
+    """Every project, read from the database per request so a change applies at once.
+    ponytail: one small SELECT per request; cache it if it ever shows in latency."""
+    rows = await session.scalars(select(ProjectRow).order_by(ProjectRow.id))
+    projects = tuple(project_from_row(row) for row in rows)
+    await session.rollback()  # ends this read's transaction: the write routes sharing the session start their own
+    return projects
+
+
+def require_admin(authorization: Annotated[str | None, Header(description="Bearer <ADMIN_API_KEY>")] = None) -> None:
+    """Guards the routes that create, edit or delete projects. No ADMIN_API_KEY configured = they stay closed."""
+    key = get_settings().admin_api_key
+    scheme, _, supplied = (authorization or "").partition(" ")
+    if not key or scheme.lower() != "bearer" or not hmac.compare_digest(supplied.encode(), key.encode()):
+        raise UnauthorizedError("Missing or invalid admin key.")
 
 
 def get_project(project_id: str, projects: Annotated[tuple[Project, ...], Depends(get_projects)]) -> Project:

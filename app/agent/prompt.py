@@ -80,8 +80,9 @@ def build_system_prompt(project: Project, spans: Spans | None = None, *, now: da
 
 def _project_lines(project: Project, spans: Spans | None, now: datetime) -> str:
     count = len(project.files)
+    where = "stored logs" if project.folder is None and project.push_source else f"{count} file{'' if count == 1 else 's'}"
     header = (f"{project.title}: type {project.type}, timezone {project.timezone} "
-              f"(UTC{_offset(project.timezone, now)}), {count} file{'' if count == 1 else 's'}{_span(project, spans)}")
+              f"(UTC{_offset(project.timezone, now)}), {where}{_span(project, spans)}")
     lines = [header]
     if not project.sources:
         lines.append("It has no log files yet: say so; do not guess file names.")

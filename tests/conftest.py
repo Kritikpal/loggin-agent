@@ -17,7 +17,7 @@ from app.core.config import get_settings
 from scripts.create_database import ensure_database
 
 ROOT = Path(__file__).resolve().parents[1]
-TABLES = "log_events, source_index_state"
+TABLES = "log_events, source_index_state, projects"
 
 
 def _test_url() -> str:

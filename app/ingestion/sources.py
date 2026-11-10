@@ -40,7 +40,8 @@ class PushSource(SourceBase):
     """Logs a project's applications push to the ingest endpoint. `token_env` names the environment variable that
     holds the bearer token, so the secret itself is never kept on the project."""
 
-    token_env: str
+    token_env: str | None = None  # a project.yaml project names an environment variable ...
+    token_hash: str | None = None  # ... a database project keeps the SHA-256 of its token instead
 
 
 Source = FileSource | PushSource

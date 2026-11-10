@@ -63,3 +63,22 @@ async def projects_client(
             yield http
     finally:
         app.dependency_overrides.clear()
+
+
+@asynccontextmanager
+async def db_client(session_factory: Callable) -> AsyncIterator[AsyncClient]:
+    """The real app, projects read from the test database (only the session is swapped)."""
+    from app.core.database import get_session
+    from app.main import create_app
+
+    async def test_session():
+        async with session_factory() as session:
+            yield session
+
+    app = create_app()
+    app.dependency_overrides[get_session] = test_session
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
+            yield http
+    finally:
+        app.dependency_overrides.clear()
