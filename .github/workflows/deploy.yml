@@ -11,16 +11,17 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Set up SSH
+      - name: Trust server host key
         run: |
           install -m 700 -d ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_deploy
-          chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
+          sudo apt-get install -y -qq sshpass
 
       - name: Clone or update, build, start
+        env:
+          SSHPASS: ${{ secrets.SERVER_PASSWORD }}  # read from env so it never appears in the command line
         run: |
-          ssh -i ~/.ssh/id_deploy "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" bash -s <<'REMOTE'
+          sshpass -e ssh "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" bash -s <<'REMOTE'
           set -euo pipefail
           DIR=/home/iamuser/logging-agent/loggin-agent
           if [ -d "$DIR/.git" ]; then
