@@ -84,7 +84,10 @@ def _authorized_source(project: Project, authorization: str | None) -> PushSourc
     source = project.push_source
     if source is None:
         raise NotFoundError(NOT_FOUND)
-    check_token(source, authorization)
+    if get_settings().ingest_require_token:
+        check_token(source, authorization)
+    else:
+        logger.warning("INGEST_REQUIRE_TOKEN is off: accepted a push to %s without a token check", project.id)
     if project.error:  # only after the token: a caller without it learns nothing about the project
         raise ProjectInvalidError(f"Project '{project.id}' is invalid.")
     return source

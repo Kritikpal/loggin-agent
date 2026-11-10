@@ -174,3 +174,16 @@ async def test_import_moves_a_folder_project_into_the_database(tmp_path, session
         events = await s.scalar(select(func.count()).select_from(LogEvent))
     assert row.title == "Old" and row.timezone == "Asia/Kolkata"
     assert sources == {"old/push"} and events > 10
+
+
+async def test_ingest_needs_no_token_when_the_switch_is_off(session_factory, monkeypatch):
+    async with db_client(session_factory) as http:
+        await create(http)
+        url = "/api/v1/projects/shop/ingest"
+        assert (await http.post(url, json=[{"message": "a"}])).status_code == 401  # on by default
+        monkeypatch.setattr(get_settings(), "ingest_require_token", False)
+        res = await http.post(url, json=[{"message": "a"}])
+        up = await http.post("/api/v1/projects/shop/upload", content=LOG.encode())
+        ghost = await http.post("/api/v1/projects/ghost/ingest", json=[{"message": "a"}])
+    assert res.json()["stored"] == 1 and up.status_code == 200
+    assert ghost.status_code == 404  # an unknown project is still refused
