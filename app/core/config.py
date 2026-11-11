@@ -19,8 +19,6 @@ class Settings(BaseSettings):
     groq_api_keys: list[str] = Field(default_factory=list)
     # Only scripts.import_projects / scripts.index_logs read this: the API keeps projects and logs in the database.
     logs_root: Path = ROOT_DIR / "logs"
-    # Bearer key for creating, editing and deleting projects. Unset = those routes stay closed. Override with ADMIN_API_KEY
-    admin_api_key: str | None = None
     upload_max_body_bytes: int = 50 * 1024 * 1024  # largest log file upload (413 above); override with UPLOAD_MAX_BODY_BYTES
     # Secret that turns each e-mail mask into [REDACTED:email:u...], a stable code per address (see app.ingestion.pseudonym).
     # Unset = e-mails are masked with no code. Changing it changes every code. Override with PSEUDONYM_KEY

@@ -6,7 +6,7 @@ import logging
 from collections.abc import Sequence
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +16,7 @@ from app.core.config import get_settings
 from app.core.database import get_session
 from app.core.errors import NotFoundError, ProjectInvalidError, StorageUnavailableError
 from app.ingestion.projects import NOT_FOUND, Project
-from app.ingestion.push import build_push_rows, check_token, parse_body, read_body
+from app.ingestion.push import build_push_rows, parse_body, read_body
 from app.ingestion.sources import PushSource
 from app.ingestion.store import EventRow, insert_new_events
 from app.ingestion.upload import build_upload_rows
@@ -50,9 +50,8 @@ async def ingest(
     request: Request,
     project: Annotated[Project, Depends(get_project)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    authorization: Annotated[str | None, Header(description="Bearer <the project's push token>")] = None,
 ) -> IngestResponse:
-    source = _authorized_source(project, authorization)
+    source = _push_source(project)
     events = parse_body(await read_body(request), request.headers.get("content-type", ""))
     rows = await asyncio.to_thread(build_push_rows, events, source)
     stored = await _store(session, source, rows)
@@ -69,23 +68,21 @@ async def upload(
     request: Request,
     project: Annotated[Project, Depends(get_project)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    authorization: Annotated[str | None, Header(description="Bearer <the project's push token>")] = None,
 ) -> IngestResponse:
     """The body is the raw text of a log file (`curl --data-binary @app.log`). It is split into events using the
     project's event pattern; the file itself is not kept, only its events."""
-    source = _authorized_source(project, authorization)
+    source = _push_source(project)
     body = await read_body(request, limit=get_settings().upload_max_body_bytes, setting="UPLOAD_MAX_BODY_BYTES")
     rows = await asyncio.to_thread(build_upload_rows, body, source)
     stored = await _store(session, source, rows, batch=UPLOAD_BATCH)
     return IngestResponse(received=len(rows), stored=stored, duplicates=len(rows) - stored, skipped=0)
 
 
-def _authorized_source(project: Project, authorization: str | None) -> PushSource:
+def _push_source(project: Project) -> PushSource:
     source = project.push_source
     if source is None:
         raise NotFoundError(NOT_FOUND)
-    check_token(source, authorization)
-    if project.error:  # only after the token: a caller without it learns nothing about the project
+    if project.error:
         raise ProjectInvalidError(f"Project '{project.id}' is invalid.")
     return source
 

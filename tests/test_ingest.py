@@ -1,4 +1,4 @@
-"""POST /projects/{id}/ingest: auth, limits, dedup and what gets stored."""
+"""POST /projects/{id}/ingest: limits, dedup and what gets stored. Open: no tokens."""
 
 import asyncio
 import json
@@ -16,25 +16,18 @@ from tests.project_helpers import make_project, projects_client
 
 pytestmark = pytest.mark.integration
 
-TOKEN = "s3cret"
 URL = "/api/v1/projects/demo/ingest"
 WSO2_ERROR = "TID: [-1234] [] [2026-11-04 10:00:00,123] ERROR {org.acme.Pool} - pool exhausted"
 
 
-@pytest.fixture(autouse=True)
-def token_env(monkeypatch):
-    monkeypatch.setenv("DEMO_TOKEN", TOKEN)
-
-
 def push_project(timezone: str = "UTC", **kwargs):
-    source = PushSource(id="demo/push", token_env="DEMO_TOKEN", timezone=timezone)
+    source = PushSource(id="demo/push", timezone=timezone)
     return make_project(timezone=timezone, push_source=source, **kwargs)
 
 
-async def push(http, body, *, token: str | None = TOKEN, content_type: str = "application/json", url: str = URL):
+async def push(http, body, *, content_type: str = "application/json", url: str = URL):
     content = body if isinstance(body, bytes) else json.dumps(body).encode()
-    headers = {"Content-Type": content_type, **({"Authorization": f"Bearer {token}"} if token else {})}
-    return await http.post(url, content=content, headers=headers)
+    return await http.post(url, content=content, headers={"Content-Type": content_type})
 
 
 async def rows(factory) -> list[LogEvent]:
@@ -77,28 +70,12 @@ async def test_secret_is_redacted_and_deduplicates(session_factory):
     assert "hunter2" not in stored.raw_text and "other" not in stored.raw_text
 
 
-@pytest.mark.parametrize("token", [None, "wrong"])
-async def test_missing_or_wrong_token_is_401(session_factory, token):
-    async with projects_client(session_factory, (push_project(),)) as http:
-        res = await push(http, [{"message": "x"}], token=token)
-    assert res.status_code == 401
-    assert await rows(session_factory) == []
-
-
-async def test_wrong_scheme_is_401(session_factory):
-    async with projects_client(session_factory, (push_project(),)) as http:
-        res = await http.post(URL, json=[{"message": "x"}], headers={"Authorization": f"Basic {TOKEN}"})
-    assert res.status_code == 401
-
-
-async def test_not_found_cases_look_the_same(session_factory, monkeypatch):
+async def test_not_found_cases_look_the_same(session_factory):
     async with projects_client(session_factory, (push_project(), make_project("plain"))) as http:
         unknown = await push(http, [{"message": "x"}], url="/api/v1/projects/nope/ingest")
         no_push = await push(http, [{"message": "x"}], url="/api/v1/projects/plain/ingest")
-        monkeypatch.delenv("DEMO_TOKEN")
-        unset = await push(http, [{"message": "x"}])
-    assert unknown.status_code == no_push.status_code == unset.status_code == 404
-    assert unknown.json() == no_push.json() == unset.json()
+    assert unknown.status_code == no_push.status_code == 404
+    assert unknown.json() == no_push.json()
 
 
 async def test_invalid_project_is_409(session_factory):
@@ -215,15 +192,6 @@ async def test_concurrent_identical_pushes_store_one_row(session_factory):
 # --- fixes from the final review ---
 
 
-async def test_token_set_only_in_dotenv_settings_is_found(session_factory, monkeypatch):
-    monkeypatch.delenv("DEMO_TOKEN")  # .env values reach Settings.model_extra, never os.environ
-    settings = Settings(_env_file=None, database_url="postgresql://u@h/db", DEMO_TOKEN=TOKEN)
-    monkeypatch.setattr("app.ingestion.push.get_settings", lambda: settings)
-    async with projects_client(session_factory, (push_project(),)) as http:
-        res = await push(http, [{"message": "x"}])
-    assert res.status_code == 200
-
-
 async def test_timestamps_at_the_edge_of_the_range_are_not_a_500(session_factory):
     events = [{"message": "min", "timestamp": "0001-01-01T00:00:00"}, {"message": "max", "timestamp": "9999-12-31T23:59:59"}]
     async with projects_client(session_factory, (push_project("Asia/Kolkata"),)) as http:
@@ -302,14 +270,7 @@ async def test_a_database_error_that_is_not_a_connection_problem_is_not_503(sess
             await push(http, [{"message": "x"}])
 
 
-async def test_invalid_project_without_a_token_is_401_and_explains_nothing(session_factory):
-    async with projects_client(session_factory, (push_project(error="push_token_env must match"),)) as http:
-        res = await push(http, [{"message": "x"}], token=None)
-    assert res.status_code == 401
-    assert "push_token_env" not in res.text
-
-
-def test_openapi_documents_the_body_and_the_token_header():
+def test_openapi_documents_the_body():
     from app.main import create_app
 
     op = create_app().openapi()["paths"]["/api/v1/projects/{project_id}/ingest"]["post"]
@@ -317,7 +278,6 @@ def test_openapi_documents_the_body_and_the_token_header():
     assert body["required"] is True
     assert body["content"]["application/json"]["schema"]["items"]["required"] == ["message"]
     assert "application/x-ndjson" in body["content"]
-    assert "authorization" in [p["name"] for p in op["parameters"]]
 
 
 # --- audit fields and e-mail pseudonyms ---

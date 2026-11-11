@@ -1,4 +1,4 @@
-"""Projects, kept in the database: list and inspect them, create, edit and delete them (admin key), chat about one."""
+"""Projects, kept in the database: list and inspect them, create, edit and delete them, chat about one. Open: no keys."""
 
 import asyncio
 import uuid
@@ -11,21 +11,17 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.graph import Agent, ask
-from app.controllers.dependencies import get_agent, get_project, get_projects, get_usable_project, require_admin
+from app.controllers.dependencies import get_agent, get_project, get_projects, get_usable_project
 from app.core.database import get_session
 from app.core.errors import ConflictError, InvalidPayloadError, NotFoundError
 from app.ingestion.coverage import coverage_for_all, file_stats, orphan_ids, time_spans
-from app.ingestion.projects import (
-    NOT_FOUND, PROJECT_ID, Project, hash_token, new_token, project_from_config, row_doc,
-)
+from app.ingestion.projects import NOT_FOUND, PROJECT_ID, Project, project_from_config, row_doc
 from app.ingestion.sources import ConfigError, FileSource
 from app.models import LogEvent, SourceIndexState
 from app.models.base import utcnow
 from app.models.project import ProjectRow
 from app.schemas.chat import ChatRequest, ChatResponse
-from app.schemas.projects import (
-    ProjectCreate, ProjectCreated, ProjectDetail, ProjectFile, ProjectSummary, ProjectUpdate, PushToken,
-)
+from app.schemas.projects import ProjectCreate, ProjectDetail, ProjectFile, ProjectSummary, ProjectUpdate
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -48,19 +44,15 @@ async def get_project_detail(
     return await _detail(session, project)
 
 
-@router.post(
-    "", status_code=201, response_model=ProjectCreated, dependencies=[Depends(require_admin)],
-    summary="Create a project (admin key); the reply carries its push token, shown once")
+@router.post("", status_code=201, response_model=ProjectDetail, summary="Create a project")
 async def create_project(
     data: ProjectCreate, session: Annotated[AsyncSession, Depends(get_session)],
-) -> ProjectCreated:
+) -> ProjectDetail:
     if not PROJECT_ID.fullmatch(data.id):
         raise InvalidPayloadError(f"id must match {PROJECT_ID.pattern}")
     config = _config_of(data.model_dump(exclude_unset=True))
-    token = new_token()
     row = ProjectRow(
-        id=data.id, title=data.title, description=data.description, type=data.type, timezone=data.timezone,
-        config=config, push_token_hash=hash_token(token))
+        id=data.id, title=data.title, description=data.description, type=data.type, timezone=data.timezone, config=config)
     project = _validated(row)
     session.add(row)
     try:
@@ -68,12 +60,10 @@ async def create_project(
     except IntegrityError:
         await session.rollback()
         raise ConflictError(f"A project '{data.id}' already exists.") from None
-    return ProjectCreated(**(await _detail(session, project)).model_dump(), push_token=token)
+    return await _detail(session, project)
 
 
-@router.patch(
-    "/{project_id}", response_model=ProjectDetail, dependencies=[Depends(require_admin)],
-    summary="Edit a project (admin key); send only the fields to change")
+@router.patch("/{project_id}", response_model=ProjectDetail, summary="Edit a project; send only the fields to change")
 async def update_project(
     project_id: str, data: ProjectUpdate, session: Annotated[AsyncSession, Depends(get_session)],
 ) -> ProjectDetail:
@@ -94,20 +84,7 @@ async def update_project(
     return await _detail(session, project)
 
 
-@router.post(
-    "/{project_id}/token", response_model=PushToken, dependencies=[Depends(require_admin)],
-    summary="Replace a project's push token (admin key); the old one stops working")
-async def rotate_token(project_id: str, session: Annotated[AsyncSession, Depends(get_session)]) -> PushToken:
-    row = await _row(session, project_id)
-    token = new_token()
-    row.push_token_hash, row.updated_at = hash_token(token), utcnow()
-    await session.commit()
-    return PushToken(push_token=token)
-
-
-@router.delete(
-    "/{project_id}", status_code=204, dependencies=[Depends(require_admin)],
-    summary="Delete a project and all its logs (admin key)")
+@router.delete("/{project_id}", status_code=204, summary="Delete a project and all its logs")
 async def delete_project(project_id: str, session: Annotated[AsyncSession, Depends(get_session)]) -> Response:
     row = await _row(session, project_id)
     # autoescape: '_' in a project id is not a LIKE wildcard, so 'shop_2' is never swept up with 'shop'
@@ -173,7 +150,7 @@ def _config_of(fields: dict, *, keep_none: bool = False) -> dict:
 def _validated(row: ProjectRow) -> Project:
     """The project this row describes, or a 422 saying what is wrong with it."""
     try:
-        return project_from_config(row.id, row_doc(row), token_hash=row.push_token_hash)
+        return project_from_config(row.id, row_doc(row))
     except ConfigError as exc:
         raise InvalidPayloadError(exc.message) from None
 

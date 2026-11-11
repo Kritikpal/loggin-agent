@@ -17,7 +17,7 @@ class LogEvent(Base):
     __tablename__ = "log_events"
     __table_args__ = (
         UniqueConstraint("source_id", "event_key", name="uq_log_events_source_event"),
-        Index("ix_log_events_source_time", "source_id", "occurred_at"),
+        Index("ix_log_events_source_time_id", "source_id", "occurred_at", "id"),
         Index("ix_log_events_level_time", "level", "occurred_at"),
         Index("ix_log_events_signature_time", "signature", "occurred_at"),
         Index("ix_log_events_unembedded", "id", postgresql_where=text("embedding IS NULL")),

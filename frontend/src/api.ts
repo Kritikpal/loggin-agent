@@ -64,15 +64,13 @@ export class ApiError extends Error {
 interface RequestOptions {
   body?: unknown // sent as JSON
   rawText?: Blob // sent as is (a log file); wins over body
-  bearer?: string // an admin key or a project push token
 }
 
 async function request<T>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, opts: RequestOptions = {}): Promise<T> {
-  const { body, rawText, bearer } = opts
+  const { body, rawText } = opts
   const headers: Record<string, string> = {}
   if (rawText === undefined && body !== undefined) headers['Content-Type'] = 'application/json'
   if (rawText !== undefined) headers['Content-Type'] = 'text/plain'
-  if (bearer) headers.Authorization = `Bearer ${bearer}`
   let res: Response
   try {
     res = await fetch(`/api/v1${path}`, {
@@ -132,12 +130,11 @@ export interface ProjectInput {
   field_mappings?: Record<string, string>
 }
 
-/** The reply to creating a project. `push_token` is shown once: only its hash is kept on the server. */
+/** The reply to creating a project (app/schemas/projects.py ProjectDetail). */
 export interface ProjectCreated extends ProjectSummary {
   description: string
   timezone: string
   include: string
-  push_token: string
 }
 
 export interface UploadResult {
@@ -149,18 +146,78 @@ export interface UploadResult {
 
 const projectPath = (id: string) => `/projects/${encodeURIComponent(id)}`
 
-// Creating, editing, rotating and deleting need the admin key (ADMIN_API_KEY on the server).
-export const createProject = (input: ProjectInput, adminKey: string) =>
-  request<ProjectCreated>('POST', '/projects', { body: input, bearer: adminKey })
+export const createProject = (input: ProjectInput) => request<ProjectCreated>('POST', '/projects', { body: input })
 
-export const updateProject = (id: string, changes: Partial<Omit<ProjectInput, 'id'>>, adminKey: string) =>
-  request<ProjectSummary>('PATCH', projectPath(id), { body: changes, bearer: adminKey })
+export const updateProject = (id: string, changes: Partial<Omit<ProjectInput, 'id'>>) =>
+  request<ProjectSummary>('PATCH', projectPath(id), { body: changes })
 
-export const rotateToken = (id: string, adminKey: string) =>
-  request<{ push_token: string }>('POST', `${projectPath(id)}/token`, { bearer: adminKey })
+export const deleteProject = (id: string) => request<void>('DELETE', projectPath(id))
 
-export const deleteProject = (id: string, adminKey: string) => request<void>('DELETE', projectPath(id), { bearer: adminKey })
+/** Upload a whole log file into a project. */
+export const uploadLogs = (id: string, file: Blob) => request<UploadResult>('POST', `${projectPath(id)}/upload`, { rawText: file })
 
-/** Upload a whole log file; the project's own push token authorises it. */
-export const uploadLogs = (id: string, file: Blob, pushToken: string) =>
-  request<UploadResult>('POST', `${projectPath(id)}/upload`, { rawText: file, bearer: pushToken })
+// ---- logs (app/schemas/logs.py) ----
+
+export interface LogItem {
+  id: string
+  source: string
+  occurred_at: string | null
+  level: string | null
+  text: string
+  truncated: boolean
+  signature: string | null
+  actor: string | null
+  action: string | null
+}
+export interface LogPage {
+  items: LogItem[]
+  next_cursor: string | null
+}
+export interface LogDetail {
+  id: string
+  source: string
+  locator: Record<string, unknown>
+  occurred_at: string | null
+  level: string | null
+  raw_text: string
+  fields: Record<string, unknown>
+  signature: string | null
+  signature_template: string | null
+}
+export interface StatsBucket {
+  start: string
+  total: number
+  by_level: Record<string, number>
+}
+export interface LogFacets {
+  sampled: boolean // the window held more events than the server reads; counts cover the newest ones
+  levels: { value: string; count: number }[]
+  signatures: { value: string; template: string | null; count: number }[]
+}
+export type Interval = '1m' | '5m' | '1h' | '1d'
+
+/** The filters shared by the list, the histogram and the facets. `from`/`to` are ISO times; `to` is exclusive. */
+export interface LogFilters {
+  from?: string
+  to?: string
+  level?: string
+  q?: string
+  signature?: string
+}
+
+const query = (params: Record<string, string | number | undefined>) => {
+  const qs = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') qs.set(k, String(v))
+  return qs.size ? `?${qs}` : ''
+}
+const logsPath = (id: string) => `${projectPath(id)}/logs`
+
+export const listLogs = (id: string, f: LogFilters, opts: { cursor?: string | null; sort: 'asc' | 'desc'; limit?: number }) =>
+  request<LogPage>('GET', `${logsPath(id)}${query({ ...f, cursor: opts.cursor ?? undefined, sort: opts.sort, limit: opts.limit ?? 100 })}`)
+
+export const getLog = (id: string, eventId: string) => request<LogDetail>('GET', `${logsPath(id)}/${eventId}`)
+
+export const logStats = (id: string, f: LogFilters & { from: string; to: string }, interval: Interval) =>
+  request<{ interval: Interval; sampled: boolean; buckets: StatsBucket[] }>('GET', `${logsPath(id)}/stats${query({ ...f, interval })}`)
+
+export const logFacets = (id: string, f: LogFilters) => request<LogFacets>('GET', `${logsPath(id)}/facets${query({ ...f })}`)

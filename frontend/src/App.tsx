@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Badge, Box, Button, Callout, Card, Code, DataList, Flex, Heading, Select, Skeleton, Text, TextArea } from '@radix-ui/themes'
+import { Badge, Box, Button, Callout, Card, Code, DataList, Flex, Heading, SegmentedControl, Select, Skeleton, Text, TextArea } from '@radix-ui/themes'
 import {
   CheckCircledIcon,
   CheckIcon,
@@ -27,30 +27,40 @@ import {
   type ToolCall,
   type WorkflowStatus,
 } from './api'
+import { Logs } from './Logs'
 import { ManageProjects } from './Projects'
 
 const MAX_LEN = 2000 // ChatRequest.message limit
-const EXAMPLES = [
-  'Which products are running low on stock?',
-  'How did revenue change over the last two weeks?',
-  'Create a 15% discount campaign for Shirts',
+const EXAMPLE_GROUPS: { title: string; questions: string[] }[] = [
+  {
+    title: 'Find problems',
+    questions: ['What errors or exceptions happened in the last 24 hours?', 'Which error occurs most often, and when did it first appear?'],
+  },
+  {
+    title: 'Trace activity',
+    questions: ['Who were the most active users or initiators today?', 'What happened in the 10 minutes before the latest error?'],
+  },
+  {
+    title: 'Understand the data',
+    questions: ['How many log lines are indexed, and what time range do they cover?', 'Summarise activity per hour for the last day.'],
+  },
 ]
 const STATUS: Record<Exclude<WorkflowStatus, 'COMPLETED'>, { color: 'amber' | 'jade' | 'gray' | 'red'; label: string }> = {
-  WAITING_APPROVAL: { color: 'amber', label: 'Needs approval' },
-  EXECUTED: { color: 'jade', label: 'Campaign created' },
+  WAITING_APPROVAL: { color: 'amber', label: 'Awaiting your approval' },
+  EXECUTED: { color: 'jade', label: 'Action executed' },
   REJECTED: { color: 'gray', label: 'Rejected' },
-  INVALID_ACTION: { color: 'red', label: 'Action not valid' },
-  BLOCKED: { color: 'red', label: 'Blocked' },
+  INVALID_ACTION: { color: 'red', label: 'Action rejected as invalid' },
+  BLOCKED: { color: 'red', label: 'Blocked by policy' },
 }
 const ERROR_TITLE: Record<string, string> = {
-  network: 'Offline.',
-  unreachable: 'Server unreachable.',
-  unauthorized: 'Not allowed.',
-  ai_unavailable: 'AI unavailable.',
-  validation_error: 'Invalid message.',
-  not_found: 'Not found.',
-  conflict: 'Already decided.',
-  internal_error: 'Server error.',
+  network: 'Connection lost.',
+  unreachable: 'Log Agent API unreachable.',
+  unauthorized: 'Access denied.',
+  ai_unavailable: 'Analysis engine unavailable.',
+  validation_error: 'Question not accepted.',
+  not_found: 'Session not found.',
+  conflict: 'Already resolved.',
+  internal_error: 'Internal error.',
 }
 
 type Decision = 'APPROVED' | 'REJECTED'
@@ -77,6 +87,8 @@ export default function App() {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null)
   const [projectsError, setProjectsError] = useState<ApiError | null>(null)
   const [projectId, setProjectId] = useState<string | null>(null)
+  const [view, setView] = useState<'chat' | 'logs'>('chat')
+  const [logsSeen, setLogsSeen] = useState(false) // the Logs tab stays mounted once opened, so its filters and place survive a tab switch
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -185,33 +197,61 @@ export default function App() {
 
   return (
     <Flex direction="column" height="100%">
-      <Flex px="4" py="3" align="center" justify="between" style={{ borderBottom: '1px solid var(--gray-a5)' }}>
-        <Flex align="center" gap="3">
-          <Heading size="3">Sales assistant</Heading>
+      <Flex px="4" py="3" gap="2" align="center" justify="between" wrap="wrap" className="topbar">
+        <Flex align="center" gap="3" wrap="wrap">
+          <Flex align="center" gap="2">
+            <span className={`pulse ${projectsError ? 'down' : ''}`} aria-hidden />
+            <Heading size="3" className="mono">
+              log-agent
+            </Heading>
+          </Flex>
+          <Text size="1" color="gray">
+            Source
+          </Text>
           <ProjectPicker projects={projects} error={projectsError} value={projectId} disabled={busy} onChange={chooseProject} />
           {conversationId && (
-            <Code size="1" variant="ghost" color="gray" title={conversationId}>
-              {conversationId.slice(0, 8)}
+            <Code size="1" variant="ghost" color="gray" title={`Session ${conversationId}`}>
+              session {conversationId.slice(0, 8)}
             </Code>
           )}
         </Flex>
+        <SegmentedControl.Root size="1" value={view} onValueChange={(v) => {
+            setView(v as 'chat' | 'logs')
+            if (v === 'logs') setLogsSeen(true)
+          }}>
+          <SegmentedControl.Item value="chat">Investigate</SegmentedControl.Item>
+          <SegmentedControl.Item value="logs">Logs</SegmentedControl.Item>
+        </SegmentedControl.Root>
         <Flex gap="2">
           <ManageProjects projects={projects} onChanged={loadProjects} />
           <Button variant="soft" color="gray" onClick={newChat} disabled={busy || turns.length === 0}>
-            <PlusIcon /> New chat
+            <PlusIcon /> New investigation
           </Button>
         </Flex>
       </Flex>
 
       <Box flexGrow="1" style={{ overflowY: 'auto' }}>
-        <Box mx="auto" px="4" py="5" style={{ maxWidth: 760 }}>
-          {turns.length === 0 && <EmptyState onPick={send} disabled={busy || !projectId} />}
-          {turns.map((turn, i) => (
+        <Box mx="auto" px="4" py="5" style={{ maxWidth: view === 'logs' ? 1200 : 760 }}>
+          {logsSeen && (
+            <div hidden={view !== 'logs'}>
+              <Logs project={projects?.find((p) => p.id === projectId) ?? null} />
+            </div>
+          )}
+          {view === 'chat' && turns.length === 0 && (
+            <EmptyState onPick={send} disabled={busy || !projectId} project={projects?.find((p) => p.id === projectId) ?? null} />
+          )}
+          {view === 'chat' && turns.map((turn, i) => (
             <Flex key={turn.id} direction="column" gap="3" mb="6">
-              <Flex justify="end">
-                <Box px="3" py="2" maxWidth="85%" style={{ background: 'var(--accent-a3)', borderRadius: 'var(--radius-4)' }}>
-                  <Text as="p" size="2" style={preWrap}>
+              <Flex gap="2" className="query">
+                <span className="prompt mono" aria-hidden>
+                  &gt;
+                </span>
+                <Box flexGrow="1">
+                  <Text as="p" size="2" className="mono" style={preWrap}>
                     {turn.message}
+                  </Text>
+                  <Text size="1" color="gray">
+                    {new Date(turn.id).toLocaleTimeString()}
                   </Text>
                 </Box>
               </Flex>
@@ -235,7 +275,7 @@ export default function App() {
                   </Button>
                   {turn.error.code === 'not_found' && conversationId && (
                     <Button size="1" variant="ghost" color="gray" onClick={newChat}>
-                      Start new chat
+                      Start new investigation
                     </Button>
                   )}
                 </ErrorCallout>
@@ -248,7 +288,7 @@ export default function App() {
         </Box>
       </Box>
 
-      <Box px="4" py="3" style={{ borderTop: '1px solid var(--gray-a5)' }}>
+      {view === 'chat' && <Box px="4" py="3" className="composer">
         <form
           style={{ maxWidth: 760, margin: '0 auto' }}
           onSubmit={(e) => {
@@ -259,8 +299,8 @@ export default function App() {
           <Flex gap="2" align="end">
             <Box flexGrow="1">
               <TextArea
-                aria-label="Message"
-                placeholder={projectId ? 'Ask a question or request a campaign' : 'Choose a project'}
+                aria-label="Question" className="mono"
+                placeholder={projectId ? 'Ask about your logs, e.g. "errors from the last hour"' : 'Select a log source to begin'}
                 disabled={!projectId}
                 rows={2}
                 value={draft}
@@ -275,19 +315,19 @@ export default function App() {
               />
             </Box>
             <Button type="submit" size="3" loading={busy} disabled={!canSend}>
-              <PaperPlaneIcon /> Send
+              <PaperPlaneIcon /> Run query
             </Button>
           </Flex>
           <Flex justify="between" mt="1">
             <Text size="1" color="gray">
-              Enter to send, Shift+Enter for a new line
+              Enter to run · Shift+Enter for a new line · answers come from the indexed logs
             </Text>
             <Text size="1" color={tooLong ? 'red' : 'gray'}>
               {draft.length}/{MAX_LEN}
             </Text>
           </Flex>
         </form>
-      </Box>
+      </Box>}
     </Flex>
   )
 }
@@ -305,7 +345,7 @@ function ProjectPicker({ projects, error, value, disabled, onChange }: ProjectPi
   if (error) {
     return (
       <Text size="1" color="red" title={error.message}>
-        Projects unavailable
+        Log sources unavailable
       </Text>
     )
   }
@@ -313,18 +353,18 @@ function ProjectPicker({ projects, error, value, disabled, onChange }: ProjectPi
   if (projects.length === 0) {
     return (
       <Text size="1" color="gray">
-        No projects yet: add one under Projects
+        No log sources yet. Add one under Projects
       </Text>
     )
   }
   return (
-    <Select.Root value={value ?? undefined} onValueChange={onChange} disabled={disabled} size="1">
-      <Select.Trigger placeholder="Choose a project" aria-label="Project" />
+    <Select.Root value={value ?? ''} onValueChange={onChange} disabled={disabled} size="1">
+      <Select.Trigger placeholder="Select a log source" aria-label="Log source" />
       <Select.Content>
         {projects.map((p) => (
           <Select.Item key={p.id} value={p.id} disabled={p.status !== 'ok'} title={p.error ?? undefined}>
             {p.title}
-            {p.status !== 'ok' ? ' (invalid)' : ` · ${p.type}`}
+            {p.status !== 'ok' ? ' (invalid)' : p.title.toLowerCase() === p.type ? '' : ` · ${p.type}`}
           </Select.Item>
         ))}
       </Select.Content>
@@ -332,18 +372,34 @@ function ProjectPicker({ projects, error, value, disabled, onChange }: ProjectPi
   )
 }
 
-function EmptyState({ onPick, disabled }: { onPick: (m: string) => void; disabled: boolean }) {
+function EmptyState({ onPick, disabled, project }: { onPick: (m: string) => void; disabled: boolean; project: ProjectSummary | null }) {
   return (
-    <Flex direction="column" gap="3" pt="8">
-      <Heading size="6">Ask about sales, stock or campaigns.</Heading>
-      <Text size="2" color="gray" style={{ maxWidth: '60ch' }}>
-        Questions are answered right away. Requests to change something come back as a proposal for you to approve or reject.
-      </Text>
-      <Flex direction="column" gap="2" align="start" mt="2">
-        {EXAMPLES.map((e) => (
-          <Button key={e} variant="surface" color="gray" disabled={disabled} onClick={() => onPick(e)}>
-            {e}
-          </Button>
+    <Flex direction="column" gap="4" pt="7">
+      <Flex direction="column" gap="2">
+        <Text size="1" color="jade" className="mono">
+          {project ? `${project.title} · ${project.type} · ${project.file_count} files indexed` : 'no source selected'}
+        </Text>
+        <Heading size="7">What do you want to know about your logs?</Heading>
+        <Text size="2" color="gray" style={{ maxWidth: '62ch' }}>
+          Ask in plain English. The agent searches the indexed log lines, shows the queries it ran, and cites what it found. Anything that would
+          change something comes back as a proposal you approve first.
+        </Text>
+      </Flex>
+      <Flex direction="column" gap="4" mt="2">
+        {EXAMPLE_GROUPS.map((g) => (
+          <Flex key={g.title} direction="column" gap="2" align="start">
+            <Text size="1" weight="medium" color="gray" className="mono" style={{ textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              {g.title}
+            </Text>
+            {g.questions.map((q) => (
+              <button key={q} type="button" className="suggest" disabled={disabled} onClick={() => onPick(q)}>
+                <span className="mono" aria-hidden>
+                  &gt;
+                </span>{' '}
+                {q}
+              </button>
+            ))}
+          </Flex>
         ))}
       </Flex>
     </Flex>
@@ -354,7 +410,7 @@ function Thinking() {
   return (
     <Flex direction="column" gap="2" width="85%" aria-live="polite" aria-busy>
       <Text size="1" color="gray">
-        Thinking...
+        Searching logs and reasoning over the matches...
       </Text>
       <Skeleton height="14px" width="90%" />
       <Skeleton height="14px" width="72%" />
@@ -375,7 +431,10 @@ function Reply({ reply, decisions, outcomeFor, onDecide, children }: ReplyProps)
   const status = reply.status === 'COMPLETED' ? null : STATUS[reply.status]
   const threadId = reply.thread_id
   return (
-    <Flex direction="column" gap="3" maxWidth="85%">
+    <Flex direction="column" gap="3" className="answer">
+      <Text size="1" color="gray" className="mono">
+        AGENT
+      </Text>
       {status && (
         <Badge color={status.color} style={{ alignSelf: 'flex-start' }}>
           {status.label}
@@ -414,7 +473,7 @@ function ProposalCard({ action, state, outcome, onDecide }: ProposalProps) {
     <Card size="2">
       <Flex direction="column" gap="3">
         <Text size="2" weight="medium">
-          Proposed campaign
+          Proposed action: create campaign
         </Text>
         <DataList.Root size="2">
           <Field label="Name">{action.name}</Field>
@@ -425,12 +484,12 @@ function ProposalCard({ action, state, outcome, onDecide }: ProposalProps) {
         {outcome ? (
           <Callout.Root size="1" color={approved ? 'jade' : 'gray'}>
             <Callout.Icon>{approved ? <CheckCircledIcon /> : <InfoCircledIcon />}</Callout.Icon>
-            <Callout.Text>{approved ? 'Approved. The campaign was created.' : 'Rejected. Nothing was changed.'}</Callout.Text>
+            <Callout.Text>{approved ? 'Approved. The action was carried out.' : 'Rejected. Nothing was changed.'}</Callout.Text>
           </Callout.Root>
         ) : (
           <Flex gap="2">
             <Button loading={pending === 'APPROVED'} disabled={!!pending} onClick={() => onDecide('APPROVED')}>
-              <CheckIcon /> Approve
+              <CheckIcon /> Approve and run
             </Button>
             <Button variant="soft" color="red" loading={pending === 'REJECTED'} disabled={!!pending} onClick={() => onDecide('REJECTED')}>
               <Cross2Icon /> Reject
@@ -446,7 +505,7 @@ function ProposalCard({ action, state, outcome, onDecide }: ProposalProps) {
 }
 
 const CONFLICT_OUTCOME: Record<ConflictChoice | 'SETTLED', string> = {
-  USE_NEW: 'Updated. The assistant will use your new note from now on.',
+  USE_NEW: 'Updated. The agent will use your new note from now on.',
   KEEP_EARLIER: 'Kept the earlier note. The new one was discarded.',
   SETTLED: 'Already settled. Nothing more to do.',
 }
@@ -467,12 +526,12 @@ function ConflictCard({ conflict: c, state, onSettle }: ConflictProps) {
         <Flex align="center" gap="2" wrap="wrap">
           <Badge color="amber">Memory conflict</Badge>
           <Text size="2" color="gray">
-            Which note should the assistant use?
+            Two notes disagree. Which should the agent trust?
           </Text>
         </Flex>
         <DataList.Root size="2">
           {c.earlier_content && <Field label="Earlier note">{c.earlier_content}</Field>}
-          <Field label="You said">&ldquo;{c.evidence}&rdquo;</Field>
+          <Field label="Your correction">&ldquo;{c.evidence}&rdquo;</Field>
           <Field label="New note">{c.content}</Field>
         </DataList.Root>
         {done ? (
@@ -483,7 +542,7 @@ function ConflictCard({ conflict: c, state, onSettle }: ConflictProps) {
         ) : (
           <Flex gap="2" wrap="wrap">
             <Button loading={pending === 'USE_NEW'} disabled={!!pending} onClick={() => onSettle('USE_NEW')}>
-              <CheckIcon /> Use the new note
+              <CheckIcon /> Trust the new note
             </Button>
             <Button
               variant="soft"
@@ -492,7 +551,7 @@ function ConflictCard({ conflict: c, state, onSettle }: ConflictProps) {
               disabled={!!pending}
               onClick={() => onSettle('KEEP_EARLIER')}
             >
-              Keep the earlier one
+              Keep the earlier note
             </Button>
           </Flex>
         )}
@@ -531,7 +590,7 @@ function ToolCalls({ calls }: { calls: ToolCall[] }) {
     <details>
       <summary style={{ cursor: 'pointer' }}>
         <Text size="1" color="gray">
-          {calls.length} tool {calls.length === 1 ? 'call' : 'calls'}
+          Evidence: {calls.length} {calls.length === 1 ? 'query' : 'queries'} run against the logs
         </Text>
       </summary>
       <Flex direction="column" gap="2" mt="2">
@@ -541,13 +600,13 @@ function ToolCalls({ calls }: { calls: ToolCall[] }) {
               <Code size="2">{c.name}</Code>
               <Badge color={c.status === 'success' ? 'jade' : 'red'}>{c.status}</Badge>
             </Flex>
-            <Text size="1" color="gray">Arguments</Text>
+            <Text size="1" color="gray">Query parameters</Text>
             <pre>
               <Code size="1" variant="ghost">{JSON.stringify(c.args, null, 2)}</Code>
             </pre>
             {c.result && (
               <>
-                <Text size="1" color="gray">Result</Text>
+                <Text size="1" color="gray">Matching log output</Text>
                 <Box style={{ maxHeight: 220, overflowY: 'auto' }}>
                   <pre>
                     <Code size="1" variant="ghost">{c.result}</Code>
@@ -571,7 +630,7 @@ function ErrorCallout({ error, children }: { error: ApiError; children?: ReactNo
       </Callout.Icon>
       <Flex direction="column" gap="2">
         <Callout.Text>
-          <Text weight="bold">{ERROR_TITLE[error.code] ?? 'Request failed.'}</Text> {error.message}
+          <Text weight="bold">{ERROR_TITLE[error.code] ?? 'Query failed.'}</Text> {error.message}
         </Callout.Text>
         {fields.map((f) => (
           <Text key={f.field} size="1">
