@@ -14,7 +14,7 @@ from tests.project_helpers import make_project
 
 pytestmark = pytest.mark.integration
 
-PUSH = PushSource(id="demo/push", token_env="DEMO_TOKEN")
+PUSH = PushSource(id="demo/push")
 AUDIT = (
     "TID: [-1234] [] [2026-11-05 16:03:26,686] [f39cb36f]  INFO {AUDIT_LOG} - Initiator : Goutam003 | Action : Login | "
     'Target : ApplicationAuthenticationFramework | Data : { "ServiceProviderName" : "portalApplication" } | '

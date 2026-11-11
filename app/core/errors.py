@@ -99,3 +99,10 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def handle_unexpected(_: Request, exc: Exception) -> JSONResponse:
         logger.exception("Unhandled error", exc_info=exc)
         return _envelope(500, "internal_error", "Internal server error")
+
+
+class QueryTimeoutError(AppError):
+    """A read took longer than the statement timeout; the caller should ask for less."""
+
+    status_code = 408
+    code = "query_timeout"

@@ -1,13 +1,11 @@
-"""Pushed logs: reading the request body, checking the token and turning events into rows for the store.
+"""Pushed logs: reading the request body and turning events into rows for the store.
 
 Every event is redacted first and everything stored or hashed derives from the redacted text, so a secret never
 reaches the database or the dedup key. Errors never echo log content.
 """
 
 import hashlib
-import hmac
 import json
-import os
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -17,10 +15,9 @@ from fastapi import Request
 from pydantic import ValidationError
 
 from app.core.config import get_settings
-from app.core.errors import InvalidPayloadError, NotFoundError, PayloadTooLargeError, UnauthorizedError
+from app.core.errors import InvalidPayloadError, PayloadTooLargeError
 from app.ingestion.assembler import RawEvent
 from app.ingestion.pipeline import prepare_event
-from app.ingestion.projects import NOT_FOUND, hash_token
 from app.ingestion.readers.base import SourceEvent
 from app.ingestion.pseudonym import configured_pseudonym_key
 from app.ingestion.redaction import redact
@@ -33,25 +30,6 @@ MAX_MESSAGE_CHARS = 256 * 1024  # the same cap a file event gets (AssemblyLimits
 # The level names the agent ranks (app.agent.tools.common.LEVEL_RANKS); any other level a sender makes up is dropped.
 SENDER_LEVELS = frozenset({"TRACE", "DEBUG", "INFO", "WARN", "WARNING", "ERROR", "SEVERE", "FATAL", "CRITICAL"})
 LOCATOR = {"kind": "push"}
-
-
-def check_token(source: PushSource, authorization: str | None) -> None:
-    """404 when the project has no token configured (indistinguishable from an unknown project), 401 when the
-    request's bearer token is missing or wrong."""
-    scheme, _, supplied = (authorization or "").partition(" ")
-    if source.token_hash:  # a database project: only the hash of its token is kept
-        if scheme.lower() != "bearer" or not hmac.compare_digest(hash_token(supplied), source.token_hash):
-            raise UnauthorizedError("Missing or invalid token.")
-        return
-    if not source.token_env:
-        raise NotFoundError(NOT_FOUND)
-    # values from .env reach Settings.model_extra, not os.environ; the key's case depends on where it came from
-    extra = {key.lower(): value for key, value in (get_settings().model_extra or {}).items()}
-    expected = os.environ.get(source.token_env) or str(extra.get(source.token_env.lower(), ""))
-    if not expected:
-        raise NotFoundError(NOT_FOUND)
-    if scheme.lower() != "bearer" or not hmac.compare_digest(supplied.encode(), expected.encode()):
-        raise UnauthorizedError("Missing or invalid token.")
 
 
 async def read_body(request: Request, *, limit: int | None = None, setting: str = "PUSH_MAX_BODY_BYTES") -> bytes:

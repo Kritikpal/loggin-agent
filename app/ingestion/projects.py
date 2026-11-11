@@ -5,10 +5,8 @@ looked up among the scanned projects, never joined into a path. A broken project
 never hides the others; a file whose name cannot become an id is skipped with a reason the API shows.
 """
 
-import hashlib
 import logging
 import re
-import secrets
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,9 +30,7 @@ MAX_TITLE = 120
 MAX_DESCRIPTION = 300  # it is sent with every model call
 KEYS = {
     "title", "description", "type", "timezone", "include", "event_start", "app_packages", "field_mappings",
-    "push_token_env",
 }
-TOKEN_ENV = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
 PUSH_STEM = "push"  # the file id reserved for the push source
 NOT_FOUND = "No such project."
 
@@ -118,19 +114,11 @@ def _read(path: Path) -> dict[str, Any]:
     return document
 
 
-def hash_token(token: str) -> str:
-    return hashlib.sha256(token.encode()).hexdigest()
-
-
-def new_token() -> str:
-    return secrets.token_urlsafe(32)
-
-
-def project_from_config(project_id: str, doc: dict[str, Any], *, token_hash: str) -> Project:
+def project_from_config(project_id: str, doc: dict[str, Any]) -> Project:
     """A database project: validated like a project.yaml, with its pushed/uploaded logs as the only source."""
     where = f"project '{project_id}'"
     title, description, include, settings = _common(doc, where)
-    push = PushSource(id=f"{project_id}/{PUSH_STEM}", token_hash=token_hash, **settings)
+    push = PushSource(id=f"{project_id}/{PUSH_STEM}", **settings)
     return Project(
         id=project_id, title=title, description=description, type=doc["type"], timezone=settings["timezone"],
         include=include, push_source=push)
@@ -145,7 +133,7 @@ def row_doc(row: Any) -> dict[str, Any]:
 def project_from_row(row: Any) -> Project:
     """Any failure becomes this project's error, as for a folder: one bad row must never hide the others."""
     try:
-        return project_from_config(row.id, row_doc(row), token_hash=row.push_token_hash)
+        return project_from_config(row.id, row_doc(row))
     except ConfigError as exc:
         error = exc.message
     except (ValueError, TypeError) as exc:
@@ -157,12 +145,10 @@ def project_from_row(row: Any) -> Project:
 def _parse(folder: Path, doc: dict[str, Any]) -> Project:
     where = f"project '{folder.name}'"
     title, description, include, settings = _common(doc, where)
-    token_env = _token_env(doc.get("push_token_env"), where)
-    files, skipped = _files(folder, include, settings, reserve_push=token_env is not None)
-    push = PushSource(id=f"{folder.name}/{PUSH_STEM}", token_env=token_env, **settings) if token_env else None
+    files, skipped = _files(folder, include, settings)
     return Project(
         id=folder.name, title=title, description=description, type=doc["type"], timezone=settings["timezone"],
-        include=include, folder=folder, files=files, skipped=skipped, push_source=push)
+        include=include, folder=folder, files=files, skipped=skipped)
 
 
 def _common(doc: dict[str, Any], where: str) -> tuple[str, str, str, dict[str, Any]]:
@@ -186,14 +172,6 @@ def _common(doc: dict[str, Any], where: str) -> tuple[str, str, str, dict[str, A
     return title, description, include, settings
 
 
-def _token_env(value: Any, where: str) -> str | None:
-    if value is None:
-        return None
-    if not isinstance(value, str) or not TOKEN_ENV.fullmatch(value):
-        raise ConfigError(f"{where}: push_token_env must match {TOKEN_ENV.pattern} (an environment variable name)")
-    return value
-
-
 def file_stem(name: str) -> str:
     """A file's id within its project: the lower-cased name minus one known log extension. Only a known extension is
     dropped, so rotated files (app.log.1, app.log.2) keep distinct ids instead of colliding on their last suffix."""
@@ -212,7 +190,7 @@ def _text(value: Any, key: str, limit: int, where: str, *, required: bool) -> st
 
 
 def _files(
-    folder: Path, include: str, settings: dict[str, Any], *, reserve_push: bool = False,
+    folder: Path, include: str, settings: dict[str, Any],
 ) -> tuple[tuple[FileSource, ...], tuple[SkippedFile, ...]]:
     """The project's log files: regular, non-hidden files matching `include`, directly in the folder. Never recursive."""
     real_folder = folder.resolve()
@@ -224,8 +202,6 @@ def _files(
         stem = file_stem(path.name)
         if not path.resolve().is_relative_to(real_folder):
             skipped.append(SkippedFile(path.name, "it links to a file outside the project folder"))
-        elif reserve_push and stem == PUSH_STEM:
-            skipped.append(SkippedFile(path.name, f"the id '{PUSH_STEM}' is reserved for pushed logs"))
         elif not PROJECT_ID.fullmatch(stem):
             skipped.append(SkippedFile(path.name, f"the file name (without extension) must match {PROJECT_ID.pattern}"))
         else:

@@ -65,11 +65,3 @@ class ProjectUpdate(BaseModel):
     event_start: str | None = None
     app_packages: list[str] | None = None
     field_mappings: dict[str, str] | None = None
-
-
-class PushToken(BaseModel):
-    push_token: str  # shown once: only its hash is kept
-
-
-class ProjectCreated(ProjectDetail, PushToken):
-    pass

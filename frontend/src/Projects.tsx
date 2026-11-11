@@ -1,29 +1,19 @@
 import { useRef, useState, type ReactNode } from 'react'
 import { AlertDialog, Badge, Button, Callout, Code, Dialog, Flex, IconButton, Select, Separator, Text, TextField } from '@radix-ui/themes'
-import { CheckCircledIcon, CopyIcon, ExclamationTriangleIcon, GearIcon, PlusIcon, ReloadIcon, TrashIcon, UploadIcon } from '@radix-ui/react-icons'
+import { CheckCircledIcon, ExclamationTriangleIcon, GearIcon, PlusIcon, TrashIcon, UploadIcon } from '@radix-ui/react-icons'
 import {
   ApiError,
   PROJECT_TYPES,
   createProject,
   deleteProject,
-  rotateToken,
   uploadLogs,
   type ProjectSummary,
   type UploadResult,
 } from './api'
 
-const ADMIN_KEY = 'admin-key'
 const SLUG = /^[a-z0-9][a-z0-9_.-]{0,63}$/ // PROJECT_ID on the server
 
-function savedKey() {
-  try {
-    return sessionStorage.getItem(ADMIN_KEY) ?? ''
-  } catch {
-    return '' // storage can be blocked; the key then lives only in this dialog
-  }
-}
-
-const message = (e: unknown) => (e instanceof ApiError ? (e.status === 401 ? 'Wrong or missing admin key.' : e.message) : String(e))
+const message = (e: unknown) => (e instanceof ApiError ? e.message : String(e))
 
 interface Props {
   projects: ProjectSummary[] | null
@@ -31,20 +21,9 @@ interface Props {
   onChanged: (removedId?: string) => void
 }
 
-/** Create, upload logs to, rotate the token of, and delete projects. Needs the server's ADMIN_API_KEY. */
+/** Create, upload logs to, and delete projects. Open: no keys. */
 export function ManageProjects({ projects, onChanged }: Props) {
-  const [adminKey, setAdminKey] = useState(savedKey)
-  const [tokens, setTokens] = useState<Record<string, string>>({}) // push tokens seen this session, in memory only
   const [notice, setNotice] = useState<{ color: 'jade' | 'red'; text: string } | null>(null)
-
-  function changeKey(value: string) {
-    setAdminKey(value)
-    try {
-      sessionStorage.setItem(ADMIN_KEY, value)
-    } catch {
-      /* the key is kept in this dialog only */
-    }
-  }
 
   const ok = (text: string) => setNotice({ color: 'jade', text })
   const fail = (e: unknown) => setNotice({ color: 'red', text: message(e) })
@@ -59,13 +38,10 @@ export function ManageProjects({ projects, onChanged }: Props) {
       <Dialog.Content maxWidth="640px">
         <Dialog.Title>Projects</Dialog.Title>
         <Dialog.Description size="2" color="gray" mb="3">
-          Projects and their logs are stored in the database. Changing them needs the admin key.
+          Projects and their logs are stored in the database.
         </Dialog.Description>
 
         <Flex direction="column" gap="3">
-          <Field label="Admin key">
-            <TextField.Root type="password" autoComplete="off" value={adminKey} onChange={(e) => changeKey(e.target.value)} />
-          </Field>
           {notice && (
             <Callout.Root color={notice.color} size="1">
               <Callout.Icon>{notice.color === 'jade' ? <CheckCircledIcon /> : <ExclamationTriangleIcon />}</Callout.Icon>
@@ -79,23 +55,12 @@ export function ManageProjects({ projects, onChanged }: Props) {
             </Text>
           )}
           {projects?.map((p) => (
-            <ProjectRow
-              key={p.id}
-              project={p}
-              adminKey={adminKey}
-              token={tokens[p.id]}
-              onToken={(t) => setTokens((s) => ({ ...s, [p.id]: t }))}
-              onOk={ok}
-              onFail={fail}
-              onChanged={onChanged}
-            />
+            <ProjectRow key={p.id} project={p} onOk={ok} onFail={fail} onChanged={onChanged} />
           ))}
           <Separator size="4" />
           <NewProject
-            adminKey={adminKey}
-            onCreated={(id, token) => {
-              setTokens((s) => ({ ...s, [id]: token }))
-              ok(`Project ${id} created. Push token (shown once, copy it now):\n${token}`)
+            onCreated={(id) => {
+              ok(`Project ${id} created. Upload a log file to it above.`)
               onChanged()
             }}
             onFail={fail}
@@ -116,19 +81,14 @@ export function ManageProjects({ projects, onChanged }: Props) {
 
 interface RowProps {
   project: ProjectSummary
-  adminKey: string
-  token?: string
-  onToken: (t: string) => void
   onOk: (text: string) => void
   onFail: (e: unknown) => void
   onChanged: (removedId?: string) => void
 }
 
-function ProjectRow({ project: p, adminKey, token, onToken, onOk, onFail, onChanged }: RowProps) {
+function ProjectRow({ project: p, onOk, onFail, onChanged }: RowProps) {
   const [busy, setBusy] = useState(false)
-  const [typed, setTyped] = useState('') // a push token pasted for an upload
   const fileInput = useRef<HTMLInputElement>(null)
-  const pushToken = token ?? typed.trim()
 
   async function run(job: () => Promise<void>) {
     setBusy(true)
@@ -143,21 +103,14 @@ function ProjectRow({ project: p, adminKey, token, onToken, onOk, onFail, onChan
 
   const upload = (file: File) =>
     run(async () => {
-      const r: UploadResult = await uploadLogs(p.id, file, pushToken)
+      const r: UploadResult = await uploadLogs(p.id, file)
       onOk(`${p.id}: ${r.stored} new event(s) stored, ${r.duplicates} already there.`)
       onChanged()
     })
 
-  const rotate = () =>
-    run(async () => {
-      const r = await rotateToken(p.id, adminKey)
-      onToken(r.push_token)
-      onOk(`New push token for ${p.id} (shown once, copy it now; the old one no longer works):\n${r.push_token}`)
-    })
-
   const remove = () =>
     run(async () => {
-      await deleteProject(p.id, adminKey)
+      await deleteProject(p.id)
       onOk(`Project ${p.id} and its logs were deleted.`)
       onChanged(p.id)
     })
@@ -184,15 +137,12 @@ function ProjectRow({ project: p, adminKey, token, onToken, onOk, onFail, onChan
               if (file) upload(file)
             }}
           />
-          <Button size="1" variant="soft" disabled={busy || !pushToken} onClick={() => fileInput.current?.click()}>
+          <Button size="1" variant="soft" disabled={busy} onClick={() => fileInput.current?.click()}>
             <UploadIcon /> Upload log
-          </Button>
-          <Button size="1" variant="soft" color="gray" disabled={busy || !adminKey} onClick={rotate}>
-            <ReloadIcon /> New token
           </Button>
           <AlertDialog.Root>
             <AlertDialog.Trigger>
-              <IconButton size="1" variant="soft" color="red" aria-label={`Delete ${p.title}`} disabled={busy || !adminKey}>
+              <IconButton size="1" variant="soft" color="red" aria-label={`Delete ${p.title}`} disabled={busy}>
                 <TrashIcon />
               </IconButton>
             </AlertDialog.Trigger>
@@ -217,32 +167,11 @@ function ProjectRow({ project: p, adminKey, token, onToken, onOk, onFail, onChan
           </AlertDialog.Root>
         </Flex>
       </Flex>
-      {!token && (
-        <TextField.Root
-          size="1"
-          type="password"
-          autoComplete="off"
-          placeholder="Push token (needed to upload a log file)"
-          aria-label={`Push token for ${p.title}`}
-          value={typed}
-          onChange={(e) => setTyped(e.target.value)}
-        />
-      )}
-      {token && (
-        <Flex align="center" gap="2">
-          <Text size="1" color="gray">
-            Token known for this session
-          </Text>
-          <IconButton size="1" variant="ghost" color="gray" aria-label="Copy push token" onClick={() => navigator.clipboard?.writeText(token)}>
-            <CopyIcon />
-          </IconButton>
-        </Flex>
-      )}
     </Flex>
   )
 }
 
-function NewProject({ adminKey, onCreated, onFail }: { adminKey: string; onCreated: (id: string, token: string) => void; onFail: (e: unknown) => void }) {
+function NewProject({ onCreated, onFail }: { onCreated: (id: string) => void; onFail: (e: unknown) => void }) {
   const [id, setId] = useState('')
   const [title, setTitle] = useState('')
   const [type, setType] = useState<string>(PROJECT_TYPES[0])
@@ -253,8 +182,8 @@ function NewProject({ adminKey, onCreated, onFail }: { adminKey: string; onCreat
   async function submit() {
     setBusy(true)
     try {
-      const created = await createProject({ id, title: title.trim(), type, timezone: timezone.trim() }, adminKey)
-      onCreated(created.id, created.push_token)
+      const created = await createProject({ id, title: title.trim(), type, timezone: timezone.trim() })
+      onCreated(created.id)
       setId('')
       setTitle('')
     } catch (e) {
@@ -268,7 +197,7 @@ function NewProject({ adminKey, onCreated, onFail }: { adminKey: string; onCreat
     <form
       onSubmit={(e) => {
         e.preventDefault()
-        if (valid && adminKey && !busy) submit()
+        if (valid && !busy) submit()
       }}
     >
       <Flex direction="column" gap="2">
@@ -299,7 +228,7 @@ function NewProject({ adminKey, onCreated, onFail }: { adminKey: string; onCreat
           </Field>
         </Flex>
         <Flex justify="end">
-          <Button type="submit" loading={busy} disabled={!valid || !adminKey}>
+          <Button type="submit" loading={busy} disabled={!valid}>
             <PlusIcon /> Create project
           </Button>
         </Flex>

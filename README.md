@@ -67,16 +67,12 @@ indexing. Errors are recorded by exception class name only, never with log conte
 
 ## Pushing logs
 
-An application can send its logs here instead of having files copied in. Add one line to the project's `project.yaml`
-and set that environment variable (in `.env`) to a long random token:
-
-```yaml
-push_token_env: ACME_PUSH_TOKEN      # name of the environment variable that holds this project's bearer token
-```
+An application can send its logs here instead of having files copied in. The API is open for now: there are no keys
+or tokens, so run it only on a trusted network.
 
 ```
 curl -X POST http://localhost:8000/api/v1/projects/wso2-gateway/ingest \
-  -H "Authorization: Bearer $ACME_PUSH_TOKEN" -H "Content-Type: application/json" \
+  -H "Content-Type: application/json" \
   -d '[{"message": "TID: [-1234] [] [2026-11-04 10:00:00,123] ERROR {org.acme.Pool} - pool exhausted"},
        {"message": "payment failed", "timestamp": "2026-11-04T10:00:05Z", "level": "error"}]'
 ```
@@ -86,14 +82,12 @@ The body is a JSON list of events (or NDJSON with `Content-Type: application/x-n
 `{"received": 2, "stored": 2, "duplicates": 0, "skipped": 0}`. An event whose `message` is blank (empty,
 whitespace or only control characters) is skipped, not rejected: it is counted in `skipped`, never stored, and the
 server logs one warning per request with the count. A missing or non-string `message` is still a `422`. Limits per request: 10 MiB (`PUSH_MAX_BODY_BYTES`) and 20000 events (`PUSH_MAX_EVENTS`; about 2000 events/s are processed) (`413` above either; the message says which);
-`401` for a missing or wrong token; `404` for an unknown project, a project without `push_token_env`, or an unset
-variable; `409` for an invalid project; `422` for a malformed body; `503` when the database is down (retry).
+`404` for an unknown project; `409` for an invalid project; `422` for a malformed body; `503` when the database is down (retry).
 
 **Duplicates:** an event is identified by its redacted text plus the sender's `timestamp`, so a retried or overlapping
 batch stores nothing twice; two truly identical events with the same timestamp collapse into one. Pushed events are
 stored at once and searchable by keyword immediately; a loop inside the app adds their embeddings every
-`PUSH_EMBED_INTERVAL_SECONDS` (default 5). They appear in the project's files list as `push`. Send the token over
-HTTPS (put the app behind TLS); `push` is a reserved file id for projects that enable this.
+`PUSH_EMBED_INTERVAL_SECONDS` (default 5). They appear in the project's files list as `push`. `push` is the file id of a project's pushed logs.
 
 ## Audit fields and user pseudonyms
 

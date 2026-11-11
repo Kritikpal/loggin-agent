@@ -20,6 +20,5 @@ class ProjectRow(Base):
     config: Mapped[dict[str, Any]] = mapped_column(
         JSONB, default=dict, server_default=text("'{}'::jsonb"),
         comment="Optional event_start, app_packages and field_mappings")
-    push_token_hash: Mapped[str] = mapped_column(Text, comment="SHA-256 of the bearer token; the token is shown once")
     created_at: Mapped[CreatedAt]
     updated_at: Mapped[CreatedAt]
